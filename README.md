@@ -2,14 +2,28 @@
 
 验证工程：只 vendor `@cindy/maker-core`，自己写宿主，这条路走不走得通。
 
-**结论：走得通。** 已完成三个阶段。
+**结论：走得通。**
 
 | 阶段 | 内容 | 报告 |
 |---|---|---|
-| Phase 1 | 引擎接通（Pi 子进程 / RPC / 事件流） | [PHASE1-REPORT.md](./PHASE1-REPORT.md) |
-| Phase 2 | SQLite 持久化、中断恢复 | [PHASE2-REPORT.md](./PHASE2-REPORT.md) |
-| Phase 3 | Electron 外壳、IPC 边界、对话 UI | [PHASE3-REPORT.md](./PHASE3-REPORT.md) |
-| Phase 4 | 打包分发（NSIS）、中断续跑 | [PHASE4-REPORT.md](./PHASE4-REPORT.md) |
+| Phase 1 | 引擎接通（Pi 子进程 / RPC / 事件流） | [报告](./docs/PHASE1-REPORT.md) |
+| Phase 2 | SQLite 持久化、中断恢复 | [报告](./docs/PHASE2-REPORT.md) |
+| Phase 3 | Electron 外壳、IPC 边界、对话 UI | [报告](./docs/PHASE3-REPORT.md) |
+| Phase 4 | 打包分发（NSIS）、中断续跑 | [报告](./docs/PHASE4-REPORT.md) |
+| Phase 5 | 会话标题、权限记忆、输入队列 | [报告](./docs/PHASE5-REPORT.md) |
+| Phase 6 | 上下文压缩 | [报告](./docs/PHASE6-REPORT.md) |
+| Phase 7 | 插话纠正（steer）、上下文占用条 | [报告](./docs/PHASE7-REPORT.md) |
+| Phase 8 | 本轮改动面板（turn diff） | [报告](./docs/PHASE8-REPORT.md) |
+| Phase 9 | 权限档位、计划模式 | [报告](./docs/PHASE9-REPORT.md) |
+| Phase 10 | 思考档位（effort） | [报告](./docs/PHASE10-REPORT.md) |
+| Phase 11 | 模型热切换、多模型配置 | [报告](./docs/PHASE11-REPORT.md) |
+| Phase 12 | 导出 HTML | [报告](./docs/PHASE12-REPORT.md) |
+| Phase 13 | 子任务进度 | [报告](./docs/PHASE13-REPORT.md) |
+| Phase 14 | 额外工作目录 | [报告](./docs/PHASE14-REPORT.md) |
+| Phase 15 | 会话分支树 | [报告](./docs/PHASE15-REPORT.md) |
+| Phase 16 | 图片输入 | [报告](./docs/PHASE16-REPORT.md) |
+
+报告索引与踩坑汇总见 [docs/README.md](./docs/README.md)。
 
 ---
 
