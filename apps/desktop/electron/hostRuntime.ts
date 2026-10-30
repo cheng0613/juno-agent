@@ -35,6 +35,7 @@ import {
 import type {
   ApprovalRequest,
   CompactResult,
+  ContextUsage,
   HostEvent,
   InterruptedTurn,
 } from '../src/shared/ipc.js';
@@ -622,6 +623,58 @@ export class HostRuntime {
   ): void {
     this.recorder.recordCompactBoundary(sessionId, null, data);
     this.emit({ type: 'compact', turnId: null, ...data });
+  }
+
+  /**
+   * 轮进行中插话。与 send 的区别：send 开新一轮，steer 把话塞进当前这轮，
+   * 模型看到后调整方向而不重做。队列是「等它跑完」，steer 是「现在就改」。
+   */
+  async steer(sessionId: string, text: string): Promise<void> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session = this.session!;
+
+    // 先把「不能插话」的情况翻译成人话，否则渲染层只能看到 SESSION_RUNNING 这类黑话
+    if (!this.activeTurnId) {
+      throw new Error('当前没有正在进行的轮，直接发送即可');
+    }
+
+    try {
+      await session.steer(text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // 引擎可能在这句话投递前就把轮跑完了 —— 这不是错误，只是话没地方塞
+      if (message.includes('no active turn')) {
+        throw new Error('这一轮刚好结束了，请重新发送');
+      }
+      throw error;
+    }
+
+    // 插话也要进对话历史，否则用户看到自己说的话凭空消失
+    this.recorder.appendSteer(sessionId, this.activeTurnId, text);
+    this.emit({ type: 'steer', turnId: this.activeTurnId, text });
+  }
+
+  /**
+   * 当前上下文占用。
+   *
+   * 失败时返回 null 而不是抛错：占用条是辅助信息，拿不到就不画，
+   * 不该因为一个进度条把整个界面搞出错误提示。
+   */
+  async contextUsage(sessionId: string): Promise<ContextUsage | null> {
+    if (!this.session || this.session.id !== sessionId) return null;
+    try {
+      const usage = await this.session.getContextUsage();
+      return {
+        totalTokens: usage.totalTokens,
+        maxTokens: usage.maxTokens,
+        percentage: Math.max(0, Math.min(100, usage.percentage)),
+      };
+    } catch (error) {
+      logger.debug('contextUsage unavailable', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 
   async cancel(): Promise<void> {

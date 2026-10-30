@@ -12,6 +12,8 @@ import type { Db } from './open.js';
 
 export type MessageRole =
   | 'user'
+  /** 轮进行中插话：也是用户说的，但要与「开新一轮的用户消息」区分开 */
+  | 'user_steer'
   | 'assistant'
   | 'thinking'
   | 'tool_use'

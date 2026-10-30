@@ -21,6 +21,8 @@ const bridge: HostBridge = {
   resumeTurn: (turnId) => ipcRenderer.invoke(IPC.resumeTurn, turnId),
   dismissTurn: (turnId) => ipcRenderer.invoke(IPC.dismissTurn, turnId),
   compact: (sessionId) => ipcRenderer.invoke(IPC.compact, sessionId),
+  steer: (sessionId, text) => ipcRenderer.invoke(IPC.steer, sessionId, text),
+  contextUsage: (sessionId) => ipcRenderer.invoke(IPC.contextUsage, sessionId),
 
   onEvent: (listener) => {
     // 只把 payload 交给渲染层，不暴露 event 对象（含 sender 等能力）

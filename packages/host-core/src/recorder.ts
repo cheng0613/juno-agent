@@ -190,6 +190,26 @@ export class SessionRecorder {
     });
   }
 
+  /**
+   * 插话落库。
+   *
+   * 为什么单独一个 role：它属于当前正在跑的那一轮，不是新轮的开头。
+   * 若当成普通 user 存，重放历史时会看起来像用户连发了两条、模型却只回一次。
+   */
+  appendSteer(sessionId: string, turnId: string, text: string): void {
+    const seq = (this.seq.get(turnId) ?? 0) + 1;
+    this.seq.set(turnId, seq);
+    this.messages.append({
+      id: randomUUID(),
+      clientId: `${turnId}:user_steer:${seq}`,
+      sessionId,
+      turnId,
+      role: 'user_steer',
+      content: { text },
+      agentKind: 'pi',
+    });
+  }
+
   /** 手动收口（超时 / 用户中断） */
   finish(turnId: string, state: 'done' | 'error' | 'cancelled' | 'interrupted', error?: string): void {
     this.turns.finish(turnId, state, { error });

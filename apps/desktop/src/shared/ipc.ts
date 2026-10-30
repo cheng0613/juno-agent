@@ -25,6 +25,10 @@ export const IPC = {
   dismissTurn: 'host:dismiss-turn',
   /** 渲染 → 主：手动压缩会话上下文 */
   compact: 'host:compact',
+  /** 渲染 → 主：轮进行中插话纠正 */
+  steer: 'host:steer',
+  /** 渲染 → 主：当前上下文占用 */
+  contextUsage: 'host:context-usage',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -50,6 +54,7 @@ export interface UiMessage {
   id: string;
   role:
     | 'user'
+    | 'user_steer'
     | 'assistant'
     | 'thinking'
     | 'tool_use'
@@ -113,6 +118,7 @@ export type HostEvent =
   | { type: 'approval_settled'; requestId: string }
   | { type: 'session_title'; sessionId: string; title: string }
   | { type: 'compact'; turnId: string | null; trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null }
+  | { type: 'steer'; turnId: string; text: string }
   | { type: 'error'; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
@@ -120,6 +126,19 @@ export interface CompactResult {
   noop: boolean;
   preTokens?: number;
   postTokens?: number;
+}
+
+/**
+ * 上下文占用。
+ *
+ * 有意只取这三个字段：引擎返回的 categories / gridRows 是给「分项饼图」用的，
+ * 我们只画一根进度条，多余的字段过 IPC 只是浪费。
+ */
+export interface ContextUsage {
+  totalTokens: number;
+  maxTokens: number;
+  /** 0-100，已经夹紧过 */
+  percentage: number;
 }
 
 export interface SendInput {
@@ -147,5 +166,9 @@ export interface HostBridge {
   resumeTurn(turnId: string): Promise<void>;
   dismissTurn(turnId: string): Promise<void>;
   compact(sessionId: string): Promise<CompactResult>;
+  /** 轮在进行中时插一句话纠正方向 */
+  steer(sessionId: string, text: string): Promise<void>;
+  /** 当前上下文占用；拿不到时返回 null（不报错，UI 自己隐藏） */
+  contextUsage(sessionId: string): Promise<ContextUsage | null>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

@@ -74,6 +74,9 @@ APP_AUTOTEST=queue node scripts/launch.mjs            # 跑着时连发两条，
 # ---- 验上下文压缩 ----
 APP_AUTOTEST=compact node scripts/launch.mjs          # 小会话给 noop 提示；合成的边界应落库并渲染
 
+# ---- 验插话与上下文占用 ----
+APP_AUTOTEST=steer node scripts/launch.mjs            # 让模型数到 30，中途插话改成只数到 5
+
 # ---- CLI（验证数据层，不需要 key）----
 cd apps/spike
 node build.mjs
@@ -93,7 +96,7 @@ node dist/selftest.js        # 6/6
 | `APP_COMPACT_PCT` | 由 pi 决定（约 90） | 自动压缩在窗口的百分之几处触发；值越小压得越早 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与上下文占用 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -141,6 +144,8 @@ node dist/selftest.js        # 6/6
 - 权限记忆规则（bash/ls 记住后第二轮 0 次弹窗）
 - 输入队列（跑着时连发两条，3 轮全 done，一问一答严格交替）
 - 上下文压缩：noop 良性提示 + 边界落库/渲染/重载后仍在
+- 插话（`steer`）：数到一半插话改成只数到 5，模型真的停在 5
+- 上下文占用条：引擎给出的百分比实时显示，点击即压缩
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

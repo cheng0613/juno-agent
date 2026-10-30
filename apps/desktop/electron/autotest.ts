@@ -24,6 +24,30 @@ function outDirOf(): string {
   return path.resolve(import.meta.dirname, '../.autotest');
 }
 
+/**
+ * 截图并落盘。
+ *
+ * capturePage 会偶发 UnknownVizError（窗口被遮挡 / 合成未完成）。
+ * 这是环境噪声，不是被测功能的错 —— 必须重试，否则一次截图抖动
+ * 会让整条验收报成「功能失败」，把人带沟里。
+ */
+async function shootTo(win: BrowserWindow, name: string): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const image = await win.webContents.capturePage();
+      await fs.writeFile(path.join(outDir, `${name}.png`), image.toPNG());
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(600);
+    }
+  }
+  throw lastError;
+}
+
 export async function runAutotest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
   const outDir = outDirOf();
   await fs.mkdir(outDir, { recursive: true });
@@ -480,13 +504,28 @@ export async function runQueueTest(win: BrowserWindow, runtime: HostRuntime): Pr
     await waitFor(() => heldApprovalId !== null, 90_000, '审批把第一轮挂住');
     note(`第一轮已卡在审批上: ${heldApprovalId}`);
 
-    // 正在跑的时候连续再输入两句
-    await delay(800);
+    // 正在跑的时候把两句话排到队尾。
+    // 注意：跑着时按 Enter 是「插话」，排队得用底部的排队按钮。
     // 句子必须无歧义，否则模型会去追问「你说的第一条是什么」，
-    // 转成 ask_user_question 交互，把流程弄乱
-    note(`第二句: ${await win.webContents.executeJavaScript(typeAndEnter('回复：收到第一条'))}`);
+    // 转成 ask_user_question 交互，把流程弄乱。
+    const queueByButton = (text: string) => `
+      (() => {
+        const ta = document.querySelector('textarea');
+        if (!ta) return 'no-textarea';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, ${JSON.stringify(text)});
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        const btn = [...document.querySelectorAll('.queue-btn')][0];
+        if (!btn) return 'no-queue-btn';
+        if (btn.disabled) return 'queue-btn-disabled';
+        btn.click();
+        return 'ok';
+      })()`;
+
+    await delay(800);
+    note(`第二句: ${await win.webContents.executeJavaScript(queueByButton('回复：收到第一条'))}`);
     await delay(300);
-    note(`第三句: ${await win.webContents.executeJavaScript(typeAndEnter('回复：收到第二条'))}`);
+    note(`第三句: ${await win.webContents.executeJavaScript(queueByButton('回复：收到第二条'))}`);
 
     await delay(400);
     const queuedCount = await win.webContents.executeJavaScript(
@@ -682,6 +721,129 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
     await fs
       .writeFile(
         path.join(outDir, 'compact-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 插话 + 上下文占用验收。
+ *
+ * 插话要验的不是「API 没报错」，而是「模型真的改主意了」：
+ * 让它数到 30，数到一半插话改成只数到 5。如果它还在继续数 6、7、8，
+ * 说明 steer 根本没投递进去。
+ */
+export async function runSteerTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/steer] ${s}`);
+  };
+  const shoot = async (name: string) => {
+    await shootTo(win, name);
+    note(`截图 ${name}`);
+  };
+
+  let turnsDone = 0;
+  const steerEvents: string[] = [];
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+    if (e.type === 'steer') steerEvents.push(e.text);
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(200);
+    }
+  };
+
+  /** 往 textarea 塞值 + 派发 Enter（React 走原生 setter 才认） */
+  const typeAndEnter = (text: string) => `
+    (() => {
+      const ta = document.querySelector('textarea');
+      if (!ta) return 'no-textarea';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, ${JSON.stringify(text)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return 'ok';
+    })()`;
+
+  try {
+    await delay(2200);
+    await win.webContents.executeJavaScript('window.host.createSession()');
+    await delay(300);
+
+    /* ---- 1. 占用条：新会话应有一条（引擎给了才有） ---- */
+    const meter = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.usage').length`,
+    );
+    note(`占用条数量: ${meter}`);
+    await shoot('15-usage');
+
+    /* ---- 2. 插话 ---- */
+    await win.webContents.executeJavaScript(
+      typeAndEnter('从 1 数到 30，每个数字单独一行，不要任何解释'),
+    );
+    // 等它开始吐字，再插话 —— 太早插话这一轮可能还没真正开始
+    await delay(1500);
+
+    const steered = await win.webContents.executeJavaScript(
+      typeAndEnter('马上停，只数到 5 就结束'),
+    );
+    note(`插话: ${steered}`);
+    await delay(600);
+
+    const steerBadges = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.steer-badge').length`,
+    );
+    note(`界面上插话标记数: ${steerBadges}`);
+    await shoot('16-steer-mid');
+
+    await waitFor(() => turnsDone >= 1, 180_000, '数数这一轮结束');
+    await delay(800);
+    await shoot('17-steer-done');
+
+    /* ---- 3. 结论校验 ---- */
+    // 取最后一条助手回复，看它是停在 5 附近还是数满了 30
+    const lastAnswer = await win.webContents.executeJavaScript(
+      `(() => {
+         const rows = [...document.querySelectorAll('.bubble-ai')];
+         return rows.length ? rows[rows.length - 1].innerText : '';
+       })()`,
+    );
+    const numbers = (lastAnswer.match(/\b\d+\b/g) ?? []).map(Number);
+    const maxNumber = numbers.length ? Math.max(...numbers) : 0;
+    note(`最后回复里的最大数字: ${maxNumber}`);
+    note(`插话事件数: ${steerEvents.length}`);
+
+    if (steerBadges < 1) throw new Error('界面上没有出现插话标记');
+    if (maxNumber > 12) {
+      throw new Error(`插话后模型仍在数到 ${maxNumber}，说明 steer 没生效`);
+    }
+
+    await fs.writeFile(
+      path.join(outDir, 'steer-result.json'),
+      JSON.stringify({ ok: true, meter, steerBadges, maxNumber, steerEvents, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shoot('99-steer-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'steer-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )

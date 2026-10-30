@@ -75,6 +75,19 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
     return <ToolCard msg={msg} ok={ok} />;
   }
 
+  if (msg.role === 'user_steer') {
+    // 插话不画右侧气泡，而是靠左一条带「插话」标记的窄条 ——
+    // 它属于上面那一轮中途的补充，不是一次新提问
+    return (
+      <div className="row-steer">
+        <span className="steer-badge">插话</span>
+        <div className="bubble-steer">
+          <Inline text={msg.text ?? ''} />
+        </div>
+      </div>
+    );
+  }
+
   if (msg.role === 'user') {
     return (
       <div className="row-user">

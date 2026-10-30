@@ -106,6 +106,14 @@ export function createMockHost(): HostBridge {
     async compact() {
       return { noop: true };
     },
+    // 预览模式没有真引擎，用一组固定值让占用条能画出样子
+    async contextUsage() {
+      return { totalTokens: 24_800, maxTokens: 128_000, percentage: 19.4 };
+    },
+    async steer(_sessionId, text) {
+      const listener = [...listeners].at(-1);
+      listener?.({ type: 'steer', turnId: 'mock', text });
+    },
     onEvent(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

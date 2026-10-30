@@ -4,6 +4,7 @@ import { Chat } from './Chat';
 import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
+  ContextUsage,
   HostBridge,
   InterruptedTurn,
   SessionSummary,
@@ -17,6 +18,47 @@ declare global {
 }
 
 const THEME_KEY = 'app-theme';
+
+/**
+ * 上下文占用条。
+ *
+ * 只有超过 60% 才变色：平时它只是个背景信息，不该抢注意力；
+ * 快满的时候才该让人一眼看到。
+ */
+function UsageMeter({
+  usage,
+  onCompact,
+  compacting,
+  disabled,
+}: {
+  usage: ContextUsage;
+  onCompact: () => void;
+  compacting: boolean;
+  disabled: boolean;
+}) {
+  const pct = Math.round(usage.percentage);
+  const level = pct >= 85 ? 'high' : pct >= 60 ? 'mid' : 'low';
+  const label = `${pct}% · ${fmtTokens(usage.totalTokens)} / ${fmtTokens(usage.maxTokens)} tokens`;
+
+  return (
+    <button
+      className={`usage usage-${level}`}
+      onClick={onCompact}
+      disabled={disabled || compacting}
+      title={`${label}\n点击压缩上下文`}
+    >
+      <span className="usage-bar">
+        <span className="usage-fill" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="usage-pct">{pct}%</span>
+    </button>
+  );
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
 
 export function App() {
   // 有 Electron preload 就用真的，否则用 mock（浏览器里改样式用）
@@ -46,6 +88,8 @@ export function App() {
   // 正在跑的时候用户又输入的句子，排在这里，等本轮结束自动发出
   const [queued, setQueued] = useState<string[]>([]);
   const [compacting, setCompacting] = useState(false);
+  /** 上下文占用；null = 引擎没给，此时不画进度条 */
+  const [usage, setUsage] = useState<ContextUsage | null>(null);
   // 递增即表示「强制滚到底」：只有切会话/续跑这类主动跳转才用，
   // 流式输出仍然走「贴底才跟随」的保守策略
   const [scrollTick, setScrollTick] = useState(0);
@@ -80,6 +124,9 @@ export function App() {
       setMessages(boot.messages);
       setModel(boot.model);
       setInterrupted(boot.interruptedTurns);
+      if (boot.activeSessionId) {
+        void host.contextUsage(boot.activeSessionId).then(setUsage);
+      }
     })();
   }, [host]);
 
@@ -150,6 +197,8 @@ export function App() {
           const sid = activeRef.current;
           if (sid) {
             void host.loadSession(sid).then((rows) => setMessages(rows));
+            // 一轮跑完上下文就变了，占用条跟着刷新
+            void host.contextUsage(sid).then(setUsage);
           }
           return;
         }
@@ -170,6 +219,11 @@ export function App() {
           setSessions((prev) =>
             prev.map((s) => (s.id === event.sessionId ? { ...s, title: event.title } : s)),
           );
+          return;
+        }
+
+        case 'steer': {
+          // 插话已经在发送时乐观插入了，这里只防止重复（重载后会换成库里的那条）
           return;
         }
 
@@ -226,10 +280,20 @@ export function App() {
 
     setInput('');
 
-    // 跑着的时候不丢掉用户的话，也不硬塞给引擎（并发语义不确定），
-    // 而是排队：本轮结束后自动按顺序发出
+    // 跑着的时候按 Enter 默认「插话」：把它当成一句纠正，塞进当前这轮。
+    // 这比排队更符合直觉 —— 用户跑着时打字，十有八九是「不对，改成……」，
+    // 而不是「排队，等它跑完再说」。真要排队使底部的排队按钮。
     if (running) {
-      setQueued((prev) => [...prev, text]);
+      setMessages((prev) => [
+        ...prev,
+        { id: `steer-${Date.now()}`, role: 'user_steer' as const, text },
+      ]);
+      try {
+        await host.steer(activeId, text);
+      } catch (error) {
+        // 最常见的情况：这一轮刚好跑完了，引擎那边已经没有可以插话的轮
+        setNotice(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
 
@@ -243,6 +307,14 @@ export function App() {
     await host.send({ sessionId: activeId, text }).catch(() => setRunning(false));
   }, [input, activeId, running, host]);
 
+  /* 跑着时把这句话排到队尾，等本轮结束再发 */
+  const queueInstead = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    setQueued((prev) => [...prev, text]);
+  }, [input]);
+
   /* 手动压缩上下文 */
   const compactNow = useCallback(async () => {
     if (!activeId || running || compacting) return;
@@ -255,6 +327,8 @@ export function App() {
       setNotice(`压缩失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setCompacting(false);
+      // 压缩就是为了降占用，压完必须重算，否则进度条还停在压缩前
+      if (activeId) void host.contextUsage(activeId).then(setUsage);
     }
   }, [activeId, running, compacting, host]);
 
@@ -282,6 +356,8 @@ export function App() {
     setLiveText('');
     liveRef.current = '';
     setScrollTick((n) => n + 1);
+    setUsage(null);
+    void host.contextUsage(id).then(setUsage);
   };
 
   const newSession = async () => {
@@ -289,6 +365,8 @@ export function App() {
     setSessions(boot.sessions);
     setActiveId(boot.activeSessionId);
     setMessages(boot.messages);
+    // 新会话还没有上下文，不画进度条
+    setUsage(null);
   };
 
   const answer = async (behavior: 'allow' | 'deny') => {
@@ -392,6 +470,7 @@ export function App() {
           <span className="topbar-title">
             {sessions.find((s) => s.id === activeId)?.title ?? '会话'}
           </span>
+          {usage && <UsageMeter usage={usage} onCompact={() => void compactNow()} compacting={compacting} disabled={running} />}
           <button
             className="ghost topbar-action"
             disabled={!activeId || running || compacting || messages.length === 0}
@@ -431,7 +510,7 @@ export function App() {
               value={input}
               placeholder={
                 running
-                  ? '这一轮还在跑，Enter 会排队，结束后自动发送'
+                  ? '这一轮还在跑：Enter 插话纠正，Shift+Enter 换行'
                   : '问点什么…（Enter 发送，Shift+Enter 换行）'
               }
               onChange={(e) => setInput(e.target.value)}
@@ -443,9 +522,19 @@ export function App() {
               }}
             />
             {running ? (
-              <button className="send stop" onClick={() => void host.cancel(activeId ?? '')}>
-                <span className="square" />
-              </button>
+              <>
+                <button
+                  className="ghost queue-btn"
+                  disabled={!input.trim()}
+                  title="不想打断，等这一轮跑完再发"
+                  onClick={queueInstead}
+                >
+                  排队
+                </button>
+                <button className="send stop" onClick={() => void host.cancel(activeId ?? '')}>
+                  <span className="square" />
+                </button>
+              </>
             ) : (
               <button className="send" disabled={!input.trim()} onClick={() => void send()}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

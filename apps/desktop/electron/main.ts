@@ -33,6 +33,7 @@ function rowToUiMessage(row: {
 
   const role = row.role as
     | 'user'
+    | 'user_steer'
     | 'assistant'
     | 'thinking'
     | 'tool_use'
@@ -43,6 +44,7 @@ function rowToUiMessage(row: {
 
   switch (role) {
     case 'user':
+    case 'user_steer':
     case 'assistant':
     case 'thinking':
       return { ...base, text: String(c?.text ?? '') };
@@ -147,6 +149,14 @@ function registerIpc(): void {
     return runtime!.compact(sessionId);
   });
 
+  ipcMain.handle(IPC.steer, async (_e, sessionId: string, text: string) => {
+    return runtime!.steer(sessionId, text);
+  });
+
+  ipcMain.handle(IPC.contextUsage, async (_e, sessionId: string) => {
+    return runtime!.contextUsage(sessionId);
+  });
+
   // 只在自动化验收时开的后门：伪造一条穿透引擎的压缩边界。
   // pi 的手动压缩有内置下限，小会话永远 noop，用真实 API 堆到那个量级不经济；
   // 而我们要验的「事件→落库→渲染」那半条链路，能用一个真实事件完整跑一遍。
@@ -224,9 +234,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=permission → 验权限记忆规则
   //   APP_AUTOTEST=queue      → 验输入队列
   //   APP_AUTOTEST=compact    → 验上下文压缩
+  //   APP_AUTOTEST=steer      → 验插话与上下文占用
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -237,7 +248,9 @@ app.whenReady().then(async () => {
             ? runQueueTest(win, runtime)
             : mode === 'compact'
               ? runCompactTest(win, runtime)
-              : runAutotest(win, runtime)
+              : mode === 'steer'
+                ? runSteerTest(win, runtime)
+                : runAutotest(win, runtime)
     );
   }
 
