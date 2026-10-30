@@ -129,6 +129,9 @@ APP_AUTOTEST=status node scripts/launch.mjs           # 耗时任务中应显示
 # ---- 验配置持久化（不带 key 启动）----
 APP_AUTOTEST=settings node scripts/launch.mjs         # 无 key 时应出现全屏向导；保存后加密落盘
 
+# ---- 验保存即重启 ----
+APP_AUTOTEST=restart node scripts/launch.mjs          # 跑着时保存应弹重启确认，不静默打断
+
 # ---- CLI（验证数据层，不需要 key）----
 cd apps/spike
 node build.mjs
@@ -151,7 +154,7 @@ node dist/selftest.js        # 6/6
 | `APP_EXPORT_DIR` | `%USERPROFILE%/Documents/Agent 导出` | 导出 HTML 的落地目录 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化；`restart` = 验保存即重启 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -214,6 +217,7 @@ node dist/selftest.js        # 6/6
 - 文件回滚：`target.txt` 从 `MODIFIED` 退回 `ORIGINAL`，对话区重建、改动面板清空
 - 状态行：耗时任务中显示「正在执行命令 · 2s · 5.1k tokens」，结束后自动消失
 - 配置持久化：无 key 时出现全屏向导；保存后 `encrypted: true`，文件里无明文 key
+- 保存即重启：跑着时保存弹确认框，点「稍后」窗口保留、确认框关闭
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

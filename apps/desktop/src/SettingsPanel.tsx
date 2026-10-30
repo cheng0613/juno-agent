@@ -18,11 +18,17 @@ export function SettingsPanel({
   mode,
   onClose,
   onSaved,
+  /** 保存成功后是否自动重启（运行中改配置需要它生效） */
+  restartOnSave,
+  /** 当前是否有对话在跑；有则重启前要确认 */
+  busy,
 }: {
   host: HostBridge;
   mode: 'onboarding' | 'drawer';
   onClose?: () => void;
   onSaved: () => void;
+  restartOnSave?: boolean;
+  busy?: boolean;
 }) {
   const [state, setState] = useState<SettingsState | null>(null);
   const [form, setForm] = useState<SettingsInput>({});
@@ -30,6 +36,8 @@ export function SettingsPanel({
   const [saving, setSaving] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 保存成功但需要确认才能重启 */
+  const [confirmRestart, setConfirmRestart] = useState(false);
 
   useEffect(() => {
     void host.readSettings().then((s) => {
@@ -76,6 +84,14 @@ export function SettingsPanel({
       if (!payload.apiKey?.trim()) delete payload.apiKey;
       await host.saveSettings(payload);
       onSaved();
+
+      // 配置只在启动时读。
+      // 空闲时直接重启；正在跑对话时先问一声 —— 重启会把那一轮打断，
+      // 用户可能正等着结果，不能默默弄没。
+      if (restartOnSave) {
+        if (busy) setConfirmRestart(true);
+        else await host.restartApp();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -221,6 +237,25 @@ export function SettingsPanel({
         )}
         {error && <p className="settings-test err">✗ {error}</p>}
       </div>
+
+      {confirmRestart && (
+        <div className="settings-confirm">
+          <div className="settings-confirm-box">
+            <p className="settings-confirm-title">配置已保存</p>
+            <p className="settings-confirm-body">
+              现在有一轮对话在跑。重启才能让新配置生效，但重启会中断这一轮。
+            </p>
+            <div className="settings-confirm-actions">
+              <button className="btn ghost" onClick={() => setConfirmRestart(false)}>
+                稍后重启
+              </button>
+              <button className="btn primary" onClick={() => void host.restartApp()}>
+                立即重启
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="settings-actions">
         <button className="btn ghost" onClick={() => void doTest()} disabled={testing || saving}>

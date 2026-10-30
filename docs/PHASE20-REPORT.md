@@ -80,9 +80,11 @@ if (settings.apiKey && !process.env.APP_PI_API_KEY) {
 
 ## 两个设计取舍
 
-**保存后重启而不是热生效。**
+**保存后自动重启，但跑着时要先问一声。**
 
-配置在启动时读一次，运行中的会话已经拿旧配置建好了。热更新会出现「一半新一半旧」的状态，比重启更难排查。所以保存时提示「重启应用后生效」，首次向导里则直接 `app.relaunch()`。
+配置在启动时读一次，运行中的会话已经拿旧配置建好了。热更新会出现「一半新一半旧」的状态，比重启更难排查。
+
+所以保存后自动重启：空闲时直接重启；**跑着时先弹确认**——重启会杀掉当前轮，静默重启等于「活干了一半没了」，用户正等着结果时尤其不能默默来。选「稍后重启」就留在原地，配置已落盘但需下次启动才生效。
 
 **连通性测试不真跑对话。**
 
@@ -118,7 +120,15 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig
 明文泄漏: false / 含加密字段: true
 ```
 
-**17 个模式全部通过**，`tsc` 0 错误。
+**18 个模式全部通过**，`tsc` 0 错误。
+
+跑着时保存的验证：
+
+```
+是否在跑: true
+重启确认框: 1 / 窗口仍在: true
+稍后重启后: 窗口在=true 确认框=0
+```
 
 ---
 
@@ -143,12 +153,12 @@ pnpm dev        # 第一次会弹配置向导
 | `apps/desktop/electron/main.ts` | 启动读设置并注入 key；四个 IPC（读/存/测/重启） |
 | `apps/desktop/src/App.tsx` | 无 key 全屏拦截；侧栏「设置」入口 |
 | `apps/desktop/src/shared/ipc.ts` | `SettingsState` / `SettingsInput` / `TestResult` |
-| `apps/desktop/electron/autotest.ts` | `runSettingsTest` |
+| `apps/desktop/electron/autotest.ts` | `runSettingsTest` / `runRestartTest` |
 | `apps/desktop/src/styles/app.css` | 设置面板样式 |
 
 ## 已知限制
 
-- **改配置要重启**（首次向导会自动重启，运行中修改只提示）
+- 改配置一律需重启；跑着时给确认，选「稍后」则要用户自己重启才生效
 - 换机器 / 换系统用户后 `safeStorage` 解不开，会当作没配——这是加密的必然代价，提示里说明了
 - 没有「删除已保存的 key」按钮（要手动删 settings.json）
 - 环境变量存在时，设置里的 key 完全不生效（这是有意的优先级，但 UI 只给了文字说明）

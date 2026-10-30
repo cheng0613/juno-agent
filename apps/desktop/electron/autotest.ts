@@ -2324,3 +2324,131 @@ export async function runSettingsTest(win: BrowserWindow, runtime: HostRuntime):
     app.quit();
   }
 }
+
+/**
+ * 「保存即重启」验收。
+ *
+ * 两种路径都要对：
+ *   1. 空闲时保存 → 直接重启（不需要用户再点一次）
+ *   2. 跑着时保存 → 先弹确认，不能默默打断正在跑的对话
+ *
+ * 第 2 种是重点：重启会杀掉当前轮，
+ * 如果用户正等着结果，静默重启等于「活干到一半没了」。
+ */
+export async function runRestartTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/restart] ${s}`);
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  try {
+    await delay(2500);
+    await runtime.ensureSession();
+
+    /* ---- 1. 跑着的时候保存：应该弹确认 ---- */
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const ta = document.querySelector('textarea');
+        if (!ta) return 'no-textarea';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '用 bash 跑 sleep 8，然后一句话回答');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return 'ok';
+      })()
+    `);
+    note('已发送耗时任务');
+    // 等它真的开始跑
+    const waitStart = Date.now();
+    let isRunning = false;
+    while (Date.now() - waitStart < 30_000) {
+      isRunning = await win.webContents.executeJavaScript(
+        `document.querySelectorAll('.send.stop').length > 0`,
+      );
+      if (isRunning) break;
+      await delay(200);
+    }
+    note(`是否在跑: ${isRunning}`);
+    if (!isRunning) throw new Error('任务没跑起来，测不了「跑着时保存」');
+
+    // 打开设置抽屉并保存
+    await win.webContents.executeJavaScript(
+      `(() => { const b = [...document.querySelectorAll('.sidebar-foot .ghost')].find(x => x.textContent.includes('设置')); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(700);
+    const drawerOpen = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.settings-drawer').length`,
+    );
+    note(`设置抽屉: ${drawerOpen}`);
+
+    const saved = await win.webContents.executeJavaScript(`
+      (async () => {
+        const btn = [...document.querySelectorAll('.settings-actions .btn')].find(b => b.textContent.includes('保存'));
+        if (!btn) return 'no-save-btn';
+        if (btn.disabled) return 'save-disabled';
+        btn.click();
+        return 'clicked';
+      })()
+    `);
+    note(`点保存: ${saved}`);
+    await delay(1500);
+
+    const confirmShown = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.settings-confirm').length`,
+    );
+    const appAlive = !win.isDestroyed();
+    note(`重启确认框: ${confirmShown} / 窗口仍在: ${appAlive}`);
+
+    await shootTo(win, '39-restart-confirm');
+    note('截图 39-restart-confirm');
+
+    if (!appAlive) throw new Error('跑着时保存直接重启了，没给确认');
+    if (confirmShown < 1) throw new Error('跑着时保存没弹重启确认');
+
+    // 点「稍后重启」应该留在原地
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const b = [...document.querySelectorAll('.settings-confirm-actions .btn')].find(x => x.textContent.includes('稍后'));
+        if (b) b.click();
+        return 'ok';
+      })()
+    `);
+    await delay(600);
+    const stillAlive = !win.isDestroyed();
+    const confirmGone = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.settings-confirm').length`,
+    );
+    note(`稍后重启后: 窗口在=${stillAlive} 确认框=${confirmGone}`);
+    if (!stillAlive) throw new Error('点稍后重启却重启了');
+    if (confirmGone !== 0) throw new Error('点稍后重启确认框没关掉');
+
+    await fs.writeFile(
+      path.join(outDir, 'restart-result.json'),
+      JSON.stringify({ ok: true, isRunning, confirmShown, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-restart-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'restart-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

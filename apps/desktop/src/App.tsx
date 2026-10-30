@@ -716,10 +716,11 @@ export function App() {
           mode="drawer"
           onClose={() => setSettingsMode(null)}
           onSaved={() => {
-            setSettingsMode(null);
-            // 提示需要重启，而不是默默不生效
-            setNotice('已保存；重启应用后生效');
+            // 不关面板：还要问「现在重启还是稍后」。
+            // 真重启的话整个窗口会重开，面板自然就没了。
           }}
+          restartOnSave
+          busy={running}
         />
       )}
 

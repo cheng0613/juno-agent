@@ -1674,3 +1674,39 @@
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border);
 }
+
+/* 保存配置后：有任务在跑时的重启确认 */
+.settings-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.35);
+}
+.settings-confirm-box {
+  width: min(400px, calc(100vw - 3rem));
+  padding: var(--space-4);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.settings-confirm-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-15);
+  line-height: var(--text-15-lh);
+  color: var(--text-primary);
+  font-weight: var(--font-medium);
+}
+.settings-confirm-body {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-13);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+.settings-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
