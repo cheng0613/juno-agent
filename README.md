@@ -99,6 +99,9 @@ APP_AUTOTEST=dirs node scripts/launch.mjs             # 设完后模型能读到
 # ---- 验会话分支树 ----
 APP_AUTOTEST=tree node scripts/launch.mjs             # 退回后原话回到输入框、历史重建、再发能长新枝
 
+# ---- 验图片输入 ----
+APP_AUTOTEST=image node scripts/launch.mjs            # 发纯红图，模型必须回答「红色」
+
 # ---- CLI（验证数据层，不需要 key）----
 cd apps/spike
 node build.mjs
@@ -121,7 +124,7 @@ node dist/selftest.js        # 6/6
 | `APP_EXPORT_DIR` | `%USERPROFILE%/Documents/Agent 导出` | 导出 HTML 的落地目录 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -180,6 +183,7 @@ node dist/selftest.js        # 6/6
 - 子任务：模型真的拆出 3 个子任务，卡片从「1 个进行中」转为「全部结束」
 - 额外工作目录：模型真读到外部目录里的标记内容；resume 后仍在，清空后归零
 - 会话分支树：退回后原话回到输入框、对话区重建（3 个气泡）、再发后树从 4 涨到 6
+- 图片输入：发送纯红图，deepseek 回答「红色」；重载后图片仍在
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

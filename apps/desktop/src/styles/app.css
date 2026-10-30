@@ -1370,3 +1370,55 @@ body {
 .tree-row:hover .tree-replay { opacity: 1; }
 .tree-replay:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
 .tree-replay:disabled { opacity: 0.4; cursor: default; }
+
+/* 待发送图片缩略图条 */
+.attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.attach-item {
+  position: relative;
+  display: inline-flex;
+}
+.attach-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.attach-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-size: var(--text-11);
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.attach-x:hover { color: var(--danger); border-color: var(--danger); }
+
+/* 对话里用户消息的图片 */
+.bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.bubble-image {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}

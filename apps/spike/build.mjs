@@ -35,6 +35,7 @@ await build({
     probeModes: 'src/probeModes.ts',
     probeTasks: 'src/probeTasks.ts',
     probeTree: 'src/probeTree.ts',
+    probeImage: 'src/probeImage.ts',
   },
   bundle: true,
   platform: 'node',

@@ -1825,3 +1825,143 @@ export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     app.quit();
   }
 }
+
+/**
+ * 图片输入验收。
+ *
+ * 关键：不是验「发送不报错」，而是验模型**真的看见了图**——
+ * 发一张纯红色的图，它必须说出「红色」。看不到图的模型会瞎猜或说看不到。
+ *
+ * 图片从剪贴板路径注入不现实（Electron 测试里造不出剪贴板文件），
+ * 所以这里直接构造 data URI 走 send，绕过的只是「用户按 Ctrl+V」那一步，
+ * 落盘、转 image block、模型理解这条链全是真实的。
+ */
+export async function runImageTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/image] ${s}`);
+  };
+
+  let turnsDone = 0;
+  let lastAnswer = '';
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+    if (e.type === 'text' && e.isFinal) lastAnswer = e.text;
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  /** 造一张 64x64 纯色 PNG 的 data URI */
+  const solidPngDataUrl = (r: number, g: number, b: number): string => {
+    const width = 64;
+    const height = 64;
+    const rows: number[] = [];
+    for (let y = 0; y < height; y += 1) {
+      rows.push(0); // filter none
+      for (let x = 0; x < width; x += 1) rows.push(r, g, b);
+    }
+    const raw = Buffer.from(rows);
+    const zlib = require('node:zlib') as typeof import('node:zlib');
+    const crcTable: number[] = [];
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c >>> 0;
+    }
+    const crc32 = (buf: Buffer): number => {
+      let crc = 0xffffffff;
+      for (const byte of buf) crc = crcTable[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+      return (crc ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, data: Buffer): Buffer => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(data.length, 0);
+      const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(body), 0);
+      return Buffer.concat([len, body, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 2;
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', zlib.deflateSync(raw)),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+    return `data:image/png;base64,${png.toString('base64')}`;
+  };
+
+  try {
+    await delay(2200);
+    const sessionId = await runtime.ensureSession();
+    note(`当前会话: ${sessionId}`);
+
+    // 纯红图
+    const redImage = solidPngDataUrl(220, 30, 30);
+    note(`图片 data URI 长度: ${redImage.length}`);
+
+    turnsDone = 0;
+    lastAnswer = '';
+    await runtime.send(sessionId, '这张图主体是什么颜色？只回答颜色名，不要解释。', {
+      images: [redImage],
+    });
+    await waitFor(() => turnsDone >= 1, 180_000, '带图这一轮');
+    await delay(600);
+
+    note(`模型回答: ${JSON.stringify(lastAnswer.slice(0, 120))}`);
+    const sawRed = /红/.test(lastAnswer);
+    note(`回答里提到红色: ${sawRed}`);
+
+    // 界面：用户消息里应该有 img
+    const bubbleImgs = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.bubble-image').length`,
+    );
+    note(`对话里图片数: ${bubbleImgs}`);
+    await shootTo(win, '34-image');
+    note('截图 34-image');
+
+    if (!sawRed) throw new Error(`模型没说红色，可能没看到图。实际回答: ${lastAnswer.slice(0, 100)}`);
+    if (bubbleImgs < 1) throw new Error('界面里没显示用户发的图');
+
+    // 落库校验：重载后图还在
+    const reloaded = await win.webContents.executeJavaScript(
+      `window.host.loadSession(${JSON.stringify(sessionId)}).then(rows => rows.filter(r => r.images && r.images.length).length)`,
+    );
+    note(`重载后带图消息数: ${reloaded}`);
+    if (reloaded < 1) throw new Error('重载后图片丢了');
+
+    await fs.writeFile(
+      path.join(outDir, 'image-result.json'),
+      JSON.stringify({ ok: true, answer: lastAnswer.slice(0, 200), bubbleImgs, reloaded, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-image-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'image-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

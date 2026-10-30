@@ -52,6 +52,7 @@ import {
   type DiffBaseline,
 } from './turnDiff.js';
 import { parseModelCatalog } from './modelCatalog.js';
+import { saveImageAttachment, type SavedImage } from './imageAttachment.js';
 
 export interface HostConfig {
   upstreamRoot: string;
@@ -637,11 +638,28 @@ export class HostRuntime {
     this.emit({ type: 'approval_settled', requestId });
   }
 
-  async send(sessionId: string, text: string, opts?: { reuseClientId?: string }): Promise<void> {
+  async send(
+    sessionId: string,
+    text: string,
+    opts?: { reuseClientId?: string; images?: string[] },
+  ): Promise<void> {
     if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
 
     const session = this.session!;
-    const turn = this.recorder.beginUserTurn(sessionId, 'pi', text, opts?.reuseClientId);
+
+    // 图片先落盘再开轮：落盘失败时不应该已经开了一个空轮
+    const savedImages: SavedImage[] = [];
+    for (const dataUrl of opts?.images ?? []) {
+      savedImages.push(await saveImageAttachment(path.join(this.cfg.dataDir, 'sessions'), dataUrl));
+    }
+
+    const turn = this.recorder.beginUserTurn(
+      sessionId,
+      'pi',
+      text,
+      opts?.reuseClientId,
+      savedImages.map((img) => ({ path: img.path })),
+    );
     this.maybeTitleSession(sessionId);
 
     // 上一轮还没收口就来了新 send：旧订阅要先拆掉，否则它会继续吃新一轮的事件，
@@ -690,7 +708,17 @@ export class HostRuntime {
       paths: [],
     };
 
-    await session.send(text);
+    await session.send(
+      savedImages.length === 0
+        ? text
+        : ({
+            type: 'user',
+            content: [
+              { type: 'text', text },
+              ...savedImages.map((img) => ({ type: 'image', path: img.path })),
+            ],
+          } as never),
+    );
   }
 
   /** 记下本轮 tool_use 碰过的路径（非 git 目录时当兼底） */

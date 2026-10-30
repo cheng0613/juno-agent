@@ -53,6 +53,7 @@ export class SessionRecorder {
     agentKind: string,
     userText: string,
     reuseClientId?: string,
+    images?: Array<{ path: string }>,
   ): BeginTurnResult {
     const userClientId = reuseClientId ?? randomUUID();
     const userMessageId = reuseClientId ?? randomUUID();
@@ -65,7 +66,13 @@ export class SessionRecorder {
       sessionId,
       turnId,
       role: 'user',
-      content: { text: userText },
+      content: {
+        text: userText,
+        // 只存路径，不存 base64：
+        // 一是库里变大很快，二是图片文件本来就在磁盘上，存两份没意义。
+        // UI 读历史时由主进程按路径读回来转 data URL。
+        ...(images && images.length > 0 ? { images: images.map((i) => ({ path: i.path })) } : {}),
+      },
       agentKind: agentKind as never,
     });
 

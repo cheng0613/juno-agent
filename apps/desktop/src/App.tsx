@@ -103,6 +103,8 @@ export function App() {
   const [queued, setQueued] = useState<string[]>([]);
   const [compacting, setCompacting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** 待发送的图（data URI） */
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   /** 子任务；引擎推的是全量快照，直接替换 */
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   /** 额外工作目录 */
@@ -347,9 +349,12 @@ export function App() {
   /* ---------------- 发送 ---------------- */
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || !activeId) return;
+    // 只发图不打字也应该能发
+    if ((!text && pendingImages.length === 0) || !activeId) return;
 
     setInput('');
+    const images = pendingImages;
+    setPendingImages([]);
 
     // 跑着的时候按 Enter 默认「插话」：把它当成一句纠正，塞进当前这轮。
     // 这比排队更符合直觉 —— 用户跑着时打字，十有八九是「不对，改成……」，
@@ -371,12 +376,12 @@ export function App() {
     // 乐观插入，等 turn 收口后由数据库结果覆盖
     setMessages((prev) => [
       ...prev,
-      { id: `local-${Date.now()}`, role: 'user', text },
+      { id: `local-${Date.now()}`, role: 'user', text, ...(images.length > 0 ? { images } : {}) },
     ]);
     // 同样乐观置 running，防手快连敲两次 Enter 重复发送
     setRunning(true);
-    await host.send({ sessionId: activeId, text }).catch(() => setRunning(false));
-  }, [input, activeId, running, host]);
+    await host.send({ sessionId: activeId, text, images }).catch(() => setRunning(false));
+  }, [input, activeId, running, pendingImages, host]);
 
   /* 跑着时把这句话排到队尾，等本轮结束再发 */
   const queueInstead = useCallback(() => {
@@ -513,6 +518,19 @@ export function App() {
       setExporting(false);
     }
   }, [activeId, host]);
+
+  /* 从剪贴板/拖放里收图片 */
+  const addImages = useCallback((files: File[]) => {
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        if (result) setPendingImages((prev) => [...prev, result]);
+      };
+      reader.readAsDataURL(file);
+    }
+  }, []);
 
   /* 手动压缩上下文 */
   const compactNow = useCallback(async () => {
@@ -778,6 +796,22 @@ export function App() {
         </div>
 
         <div className="composer-wrap">
+          {pendingImages.length > 0 && (
+            <div className="attach-strip">
+              {pendingImages.map((src, i) => (
+                <span className="attach-item" key={i}>
+                  <img className="attach-thumb" src={src} alt="待发送图片" />
+                  <button
+                    className="attach-x"
+                    title="移除"
+                    onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {queued.length > 0 && (
             <div className="queue-strip">
               <span className="queue-label">排队中 {queued.length}</span>
@@ -806,6 +840,22 @@ export function App() {
                   : '问点什么…（Enter 发送，Shift+Enter 换行）'
               }
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files];
+                if (files.length === 0) return;
+                // 有图就吃掉这次粘贴，不然同时还会粘进一堆乱码（部分平台粘贴图片会给文件名）
+                if (files.some((f) => f.type.startsWith('image/'))) {
+                  e.preventDefault();
+                  addImages(files);
+                }
+              }}
+              onDrop={(e) => {
+                const files = [...e.dataTransfer.files];
+                if (files.length === 0) return;
+                e.preventDefault();
+                addImages(files);
+              }}
+              onDragOver={(e) => e.preventDefault()}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();

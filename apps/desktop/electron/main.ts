@@ -7,6 +7,7 @@
  *   3. 事件用单向推送（webContents.send），请求用 invoke —— 不混用
  */
 import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
@@ -25,6 +26,57 @@ let win: BrowserWindow | null = null;
 let runtime: HostRuntime | null = null;
 
 /** 把数据库行映射成渲染层的 UiMessage */
+/**
+ * 行 → UI 消息，并把图片路径读成 data URI。
+ *
+ * 库里只存路径（不存 base64），所以回显历史时需要在这里读回来。
+ * 图片文件可能已经被清掉，读不到就不带图，不能让一条历史消息把整页弄崩。
+ */
+async function mapRowsToUi(
+  rows: Array<{
+    id: string;
+    role: string;
+    content: unknown;
+    toolUseId?: string | null;
+  }>,
+): Promise<Array<import('../src/shared/ipc.js').UiMessage>> {
+  return Promise.all(
+    rows.map(async (row) => {
+      const ui = rowToUiMessage(row);
+      if (ui.role !== 'user' && ui.role !== 'user_steer') return ui;
+
+      let c: Record<string, unknown>;
+      try {
+        c = typeof row.content === 'string' ? JSON.parse(row.content) : (row.content as never);
+      } catch {
+        return ui;
+      }
+      const entries = Array.isArray(c?.images) ? (c.images as Array<{ path?: string }>) : [];
+      if (entries.length === 0) return ui;
+
+      const dataUrls: string[] = [];
+      for (const entry of entries) {
+        if (typeof entry?.path !== 'string') continue;
+        try {
+          const buf = await fs.readFile(entry.path);
+          const mime =
+            buf[0] === 0x89 && buf[1] === 0x50
+              ? 'image/png'
+              : buf[0] === 0xff && buf[1] === 0xd8
+                ? 'image/jpeg'
+                : buf.toString('ascii', 0, 4) === 'GIF8'
+                  ? 'image/gif'
+                  : 'image/webp';
+          dataUrls.push(`data:${mime};base64,${buf.toString('base64')}`);
+        } catch {
+          // 文件没了就跳过
+        }
+      }
+      return dataUrls.length > 0 ? { ...ui, images: dataUrls } : ui;
+    }),
+  );
+}
+
 function rowToUiMessage(row: {
   id: string;
   role: string;
@@ -54,8 +106,7 @@ function rowToUiMessage(row: {
     case 'user_steer':
     case 'assistant':
     case 'thinking':
-      return { ...base, text: String(c?.text ?? '') };
-    case 'tool_use':
+      return { ...base, text: String(c?.text ?? '') };    case 'tool_use':
       return {
         ...base,
         toolName: String(c?.toolName ?? '?'),
@@ -93,7 +144,7 @@ async function bootstrap(): Promise<BootstrapResult> {
   return {
     sessions,
     activeSessionId: sessionId,
-    messages: rows.map(rowToUiMessage),
+    messages: await mapRowsToUi(rows),
     interruptedTurns: rt.interruptedTurns(),
     model: configFromEnv().model,
   };
@@ -118,12 +169,12 @@ function registerIpc(): void {
   ipcMain.handle(IPC.loadSession, async (_e, sessionId: string) => {
     const rt = runtime!;
     await rt.resume(sessionId);
-    return rt.messageRows(sessionId).map(rowToUiMessage);
+    return mapRowsToUi(rt.messageRows(sessionId));
   });
 
   ipcMain.handle(IPC.send, async (_e, input: SendInput) => {
     // 不 await：一轮可能跑几分钟，渲染层靠事件流更新
-    void runtime!.send(input.sessionId, input.text).catch((error: unknown) => {
+    void runtime!.send(input.sessionId, input.text, { images: input.images }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       win?.webContents.send(IPC.event, { type: 'error', message });
     });
@@ -316,9 +367,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=task       → 验子任务进度
   //   APP_AUTOTEST=dirs       → 验额外工作目录
   //   APP_AUTOTEST=tree       → 验会话分支树
+  //   APP_AUTOTEST=image      → 验图片输入
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -345,7 +397,9 @@ app.whenReady().then(async () => {
                             ? runExtraDirsTest(win, runtime)
                             : mode === 'tree'
                               ? runTreeTest(win, runtime)
-                              : runAutotest(win, runtime)
+                              : mode === 'image'
+                                ? runImageTest(win, runtime)
+                                : runAutotest(win, runtime)
     );
   }
 

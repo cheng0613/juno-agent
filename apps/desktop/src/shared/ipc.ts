@@ -99,6 +99,8 @@ export interface UiMessage {
   streaming?: boolean;
   /** compact_boundary 专用：谁触发的、压缩前后的 token 估算 */
   compact?: { trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null };
+  /** 用户消息带的图（data URI，主进程已读好） */
+  images?: string[];
 }
 
 export interface SessionSummary {
@@ -264,6 +266,8 @@ export interface ContextUsage {
 export interface SendInput {
   sessionId: string;
   text: string;
+  /** data URI 数组；主进程负责落盘并转成 pi 的 image block */
+  images?: string[];
 }
 
 export interface ApproveInput {

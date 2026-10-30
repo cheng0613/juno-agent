@@ -92,7 +92,14 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
     return (
       <div className="row-user">
         <div className="bubble-user">
-          <Inline text={msg.text ?? ''} />
+          {msg.images && msg.images.length > 0 && (
+            <div className="bubble-images">
+              {msg.images.map((src, i) => (
+                <img className="bubble-image" src={src} alt="用户发的图片" key={i} />
+              ))}
+            </div>
+          )}
+          {msg.text ? <Inline text={msg.text} /> : null}
         </div>
       </div>
     );
