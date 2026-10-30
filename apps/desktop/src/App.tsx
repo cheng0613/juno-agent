@@ -5,6 +5,7 @@ import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
 import { TaskCard } from './TaskCard';
+import { TreePanel } from './TreePanel';
 import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
@@ -16,6 +17,7 @@ import type {
   PermissionModeChoice,
   SessionSummary,
   TaskInfo,
+  TreeEntry,
   TurnDiffPayload,
   UiMessage,
 } from './shared/ipc';
@@ -106,6 +108,10 @@ export function App() {
   /** 额外工作目录 */
   const [extraDirs, setExtraDirs] = useState<ExtraDirs>({ read: [], write: [] });
   const [dirsOpen, setDirsOpen] = useState(false);
+  /** 分支树 */
+  const [tree, setTree] = useState<TreeEntry[]>([]);
+  const [treeOpen, setTreeOpen] = useState(false);
+  const [treeBusy, setTreeBusy] = useState(false);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -431,6 +437,37 @@ export function App() {
     [activeId, model, host],
   );
 
+  /**
+   * 回到某一轮重来。
+   *
+   * 两件事必须同时做：把引擎切回那个节点、把原话放回输入框。
+   * 只切不回填的话，用户得自己回忆刚才问的什么，等于白回退。
+   */
+  const replayFrom = useCallback(
+    async (entryId: string) => {
+      if (!activeId || treeBusy) return;
+      setTreeBusy(true);
+      try {
+        const result = await host.navigateTree(activeId, entryId);
+        // 用引擎给的时间线，不从数据库重拉 ——
+        // 库里还存着被丢弃那一支的消息，重拉会把它们又显示出来
+        setMessages(result.messages);
+        setLiveText('');
+        liveRef.current = '';
+        setScrollTick((n) => n + 1);
+        if (result.draftText) setInput(result.draftText);
+        setTreeOpen(false);
+        // 回退后上下文变了，占用条也要重算
+        void host.contextUsage(activeId).then(setUsage);
+      } catch (error) {
+        setNotice(`回退失败：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setTreeBusy(false);
+      }
+    },
+    [activeId, treeBusy, host],
+  );
+
   const stopTask = useCallback(
     async (taskId: string) => {
       if (!activeId) return;
@@ -542,6 +579,8 @@ export function App() {
     setTasks([]);
     setExtraDirs({ read: [], write: [] });
     setDirsOpen(false);
+    setTree([]);
+    setTreeOpen(false);
   };
 
   const answer = async (behavior: 'allow' | 'deny') => {
@@ -681,6 +720,21 @@ export function App() {
           <button
             className="ghost topbar-action"
             disabled={!activeId}
+            title="回到之前某一轮重新提问"
+            onClick={() => {
+              const next = !treeOpen;
+              setTreeOpen(next);
+              // 打开时自己拉一次，避免拿着旧树
+              if (next && activeId) {
+                void host.sessionTree(activeId).then(setTree).catch(() => setTree([]));
+              }
+            }}
+          >
+            分支
+          </button>
+          <button
+            className="ghost topbar-action"
+            disabled={!activeId}
             title="让它也能访问别的目录"
             onClick={() => {
               const next = !dirsOpen;
@@ -793,6 +847,14 @@ export function App() {
             onChange={(next) => void applyExtraDirs(next)}
             onClose={() => setDirsOpen(false)}
             onPick={() => host.pickDir()}
+          />
+        )}
+        {treeOpen && (
+          <TreePanel
+            roots={tree}
+            busy={treeBusy}
+            onNavigate={(entryId) => void replayFrom(entryId)}
+            onClose={() => setTreeOpen(false)}
           />
         )}
       </main>

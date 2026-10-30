@@ -1662,3 +1662,166 @@ export async function runExtraDirsTest(win: BrowserWindow, runtime: HostRuntime)
     app.quit();
   }
 }
+
+/**
+ * 会话分支树验收。
+ *
+ * 验的是「回到某一轮重来」的完整闭环：
+ *   1. 树里能看到之前问过的话
+ *   2. 点「重来」后，那句原话回到输入框
+ *   3. 改完再发，长出新分支（树变深/变宽）
+ *
+ * 第 3 条最重要 —— 前两条都只是「看起来对」，
+ * 只有真长出分支才说明引擎侧的树真的在长。
+ */
+export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/tree] ${s}`);
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  const typeAndSend = (text: string) => `
+    (() => {
+      const ta = document.querySelector('textarea');
+      if (!ta) return 'no-textarea';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, ${JSON.stringify(text)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return 'ok';
+    })()`;
+
+  const countNodes = (roots: Array<{ children: unknown[] }>): number => {
+    let n = 0;
+    const walk = (list: Array<{ children?: unknown[] }>) => {
+      for (const node of list) {
+        n += 1;
+        walk((node.children as Array<{ children?: unknown[] }>) ?? []);
+      }
+    };
+    walk(roots as Array<{ children?: unknown[] }>);
+    return n;
+  };
+
+  try {
+    await delay(2200);
+    const sessionId = await runtime.ensureSession();
+    note(`当前会话: ${sessionId}`);
+
+    // 造两轮对话
+    await win.webContents.executeJavaScript(typeAndSend('记住数字 42，只回答「好」'));
+    await waitFor(() => turnsDone >= 1, 180_000, '第一轮');
+    await delay(400);
+    await win.webContents.executeJavaScript(typeAndSend('刚才那个数字是多少？只回答数字'));
+    await waitFor(() => turnsDone >= 2, 180_000, '第二轮');
+    await delay(600);
+
+    const beforeTree = await runtime.sessionTree(sessionId);
+    const beforeCount = countNodes(beforeTree as unknown as Array<{ children: unknown[] }>);
+    note(`树节点数（分叉前）: ${beforeCount}`);
+    note(`顶层结构: ${JSON.stringify(beforeTree.map((n) => ({ role: n.role, preview: n.preview.slice(0, 16), kids: n.children.length })))}`);
+
+    if (beforeCount < 2) throw new Error('树里节点太少，对话没被记录');
+
+    // 打开面板
+    await win.webContents.executeJavaScript(
+      `(() => { const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(900);
+    const rows = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.tree-row').length`,
+    );
+    const replayBtns = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.tree-replay').length`,
+    );
+    note(`面板行数: ${rows} / 重来按钮数: ${replayBtns}`);
+    await shootTo(win, '31-tree');
+    note('截图 31-tree');
+
+    if (rows < 2) throw new Error(`面板行数太少: ${rows}`);
+    if (replayBtns < 1) throw new Error('没有「重来」按钮');
+
+    // 选第二个「重来」：退回到第二句之前，前面还留着一问一答。
+    // 选第一个会把历史退成空（那时后面什么都没有），验证不了「重建」
+    const clicked = await win.webContents.executeJavaScript(
+      `(() => {
+         const all = [...document.querySelectorAll('.tree-replay')];
+         const b = all[all.length - 1];
+         if (!b) return 'missing';
+         if (b.disabled) return 'disabled';
+         b.click();
+         return 'ok';
+       })()`,
+    );
+    note(`点重来: ${clicked}`);
+    await delay(2000);
+
+    const draft = await win.webContents.executeJavaScript(
+      `document.querySelector('textarea') ? document.querySelector('textarea').value : ''`,
+    );
+    note(`输入框内容: ${JSON.stringify(draft)}`);
+    await shootTo(win, '32-tree-replay');
+    note('截图 32-tree-replay');
+
+    if (!String(draft).trim()) {
+      throw new Error('原文没回到输入框');
+    }
+
+    // 回退后对话区不能是空的 —— 之前漏了这条断言，
+    // 结果界面显示「有什么可以帮你」，测试却全绿
+    const restored = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.bubble-ai, .bubble-user, .row-user').length`,
+    );
+    note(`回退后对话区气泡数: ${restored}`);
+    if (restored < 1) throw new Error('回退后对话区是空的，历史没重建');
+
+    // 改一下再发 —— 应该长出新的枝
+    turnsDone = 0;
+    await win.webContents.executeJavaScript(typeAndSend('换个问题：1+1 等于几？只回答数字'));
+    await waitFor(() => turnsDone >= 1, 180_000, '分叉后的新一轮');
+    await delay(800);
+
+    const afterTree = await runtime.sessionTree(sessionId);
+    const afterCount = countNodes(afterTree as unknown as Array<{ children: unknown[] }>);
+    note(`树节点数（分叉后）: ${afterCount}`);
+    await shootTo(win, '33-tree-forked');
+    note('截图 33-tree-forked');
+
+    await fs.writeFile(
+      path.join(outDir, 'tree-result.json'),
+      JSON.stringify({ ok: true, beforeCount, afterCount, rows, replayBtns, draft, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-tree-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'tree-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

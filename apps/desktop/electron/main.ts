@@ -197,6 +197,14 @@ function registerIpc(): void {
     return runtime!.listTasks(sessionId);
   });
 
+  ipcMain.handle(IPC.sessionTree, async (_e, sessionId: string) => {
+    return runtime!.sessionTree(sessionId);
+  });
+
+  ipcMain.handle(IPC.navigateTree, async (_e, sessionId: string, entryId: string) => {
+    return runtime!.navigateTree(sessionId, entryId);
+  });
+
   ipcMain.handle(IPC.stopTask, async (_e, sessionId: string, taskId: string) => {
     return runtime!.stopTask(sessionId, taskId);
   });
@@ -307,9 +315,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=export     → 验导出 HTML
   //   APP_AUTOTEST=task       → 验子任务进度
   //   APP_AUTOTEST=dirs       → 验额外工作目录
+  //   APP_AUTOTEST=tree       → 验会话分支树
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -334,7 +343,9 @@ app.whenReady().then(async () => {
                           ? runTaskTest(win, runtime)
                           : mode === 'dirs'
                             ? runExtraDirsTest(win, runtime)
-                            : runAutotest(win, runtime)
+                            : mode === 'tree'
+                              ? runTreeTest(win, runtime)
+                              : runAutotest(win, runtime)
     );
   }
 

@@ -53,6 +53,10 @@ export const IPC = {
   setExtraDirs: 'host:set-extra-dirs',
   /** 渲染 → 主：弹目录选择框 */
   pickDir: 'host:pick-dir',
+  /** 渲染 → 主：读会话分支树 */
+  sessionTree: 'host:session-tree',
+  /** 渲染 → 主：回到某个节点重来 */
+  navigateTree: 'host:navigate-tree',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -168,6 +172,30 @@ export interface ExtraDirs {
   write: string[];
 }
 
+/** 会话树的一个节点（已裁掉引擎特有字段） */
+export interface TreeEntry {
+  id: string;
+  kind: string;
+  role?: string;
+  preview: string;
+  /** 是否在当前活动路径上 */
+  active: boolean;
+  children: TreeEntry[];
+}
+
+/** 回到某节点后的结果：原文要放回输入框，供用户修改后重问 */
+export interface NavigateResult {
+  /** 被选中那句话的原文；没选中 user 消息时为 undefined */
+  draftText?: string;
+  /** 当前活动分支的条目数，用于界面提示 */
+  activeCount: number;
+  /**
+   * 重建后的时间线。回退后不能用数据库全量历史 ——
+   * 那里不知道分支结构，会把已被丢弃的支也显示出来。
+   */
+  messages: UiMessage[];
+}
+
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
   | { type: 'text'; turnId: string; text: string; isFinal: boolean }
@@ -278,6 +306,8 @@ export interface HostBridge {
   setExtraDirs(sessionId: string, dirs: ExtraDirs): Promise<void>;
   /** 弹系统目录选择框；取消返回 null */
   pickDir(): Promise<string | null>;
+  sessionTree(sessionId: string): Promise<TreeEntry[]>;
+  navigateTree(sessionId: string, entryId: string): Promise<NavigateResult>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

@@ -36,6 +36,9 @@ const bridge: HostBridge = {
   readExtraDirs: (sessionId) => ipcRenderer.invoke(IPC.readExtraDirs, sessionId),
   setExtraDirs: (sessionId, dirs) => ipcRenderer.invoke(IPC.setExtraDirs, sessionId, dirs),
   pickDir: () => ipcRenderer.invoke(IPC.pickDir),
+  sessionTree: (sessionId) => ipcRenderer.invoke(IPC.sessionTree, sessionId),
+  navigateTree: (sessionId, entryId) =>
+    ipcRenderer.invoke(IPC.navigateTree, sessionId, entryId),
 
   onEvent: (listener) => {
     // 只把 payload 交给渲染层，不暴露 event 对象（含 sender 等能力）

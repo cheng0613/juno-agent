@@ -39,8 +39,11 @@ import type {
   HostEvent,
   InterruptedTurn,
   ModeState,
+  NavigateResult,
   PermissionModeChoice,
   TaskInfo,
+  TreeEntry,
+  UiMessage,
 } from '../src/shared/ipc.js';
 
 import {
@@ -100,6 +103,57 @@ export function configFromEnv(): HostConfig {
 }
 
 const logger = createConsoleLogger('host');
+
+/**
+ * 引擎给的树历史 → UI 消息。
+ *
+ * 与 main.ts 的 rowToUiMessage 形状保持一致，但输入不同：
+ * 这里拿到的是引擎内部条目，不是我们库里的行。
+ * thinking / tool_use / tool_result 也一并保留，否则回退后的历史会缺块。
+ */
+function historyToUiMessage(row: {
+  clientId: string;
+  role: string;
+  content: unknown;
+  toolUseId?: string;
+}): UiMessage | null {
+  const id = row.clientId;
+
+  // content 有两种形状：user 是 { text }，assistant 的文本块直接是字符串。
+  // 只认一种就会把另一半渲染成空白 —— 回退后对话区全空就是这么来的。
+  if (typeof row.content === 'string') {
+    const role = row.role === 'user' || row.role === 'assistant' || row.role === 'thinking'
+      ? row.role
+      : null;
+    if (!role) return null;
+    return { id, role, text: row.content };
+  }
+
+  const c = (row.content ?? {}) as Record<string, unknown>;
+
+  if (row.role === 'user' || row.role === 'assistant' || row.role === 'thinking') {
+    return { id, role: row.role, text: String(c.text ?? '') };
+  }
+  if (row.role === 'tool_use') {
+    return {
+      id,
+      role: 'tool_use',
+      toolName: String(c.toolName ?? '?'),
+      toolUseId: String(c.toolUseId ?? row.toolUseId ?? ''),
+      input: c.input,
+    };
+  }
+  if (row.role === 'tool_result') {
+    return {
+      id,
+      role: 'tool_result',
+      toolUseId: String(c.toolUseId ?? row.toolUseId ?? ''),
+      output: String(c.fullText ?? c.summary ?? ''),
+      isError: c.isError === true,
+    };
+  }
+  return null;
+}
 
 /** 从库里的 JSON 字符串读目录名单；坏数据一律当空，不报错 */
 function parseDirList(raw: string | undefined): string[] {
@@ -1000,6 +1054,90 @@ export class HostRuntime {
   async stopTask(sessionId: string, taskId: string): Promise<void> {
     if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
     await this.session!.stopBackgroundTask(taskId);
+  }
+
+  /**
+   * 读会话分支树。
+   *
+   * 只保留消息类节点：model_change / thinking_level_change 这些系统节点
+   * 对用户没有意义，摆出来只会让树看起来像调试面板。
+   */
+  async sessionTree(sessionId: string): Promise<TreeEntry[]> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const snapshot = await this.session!.getSessionTree();
+    const active = new Set(snapshot.activePathIds);
+
+    const convert = (node: Record<string, unknown>, isRoot: boolean): TreeEntry | null => {
+      const kind = typeof node.kind === 'string' ? node.kind : 'unknown';
+      const children = ((node.children as Array<Record<string, unknown>>) ?? [])
+        .map((child) => convert(child, false))
+        .filter((c): c is TreeEntry => c !== null);
+
+      const role = typeof node.role === 'string' ? node.role : undefined;
+      // 只留「用户说过的话」和「模型的回答」。
+      // system / summary 这类节点对用户没有意义，摆上去只会让人以为是 bug。
+      const keep = kind === 'message' && (role === 'user' || role === 'assistant');
+      if (!keep && children.length === 0) return null;
+
+      // 非消息节点但有孩子：把子节点提升上来，不让它在树上占位
+      if (!keep) {
+        if (children.length === 1) return children[0]!;
+        // 多个子节点又不可见：造一个合成节点包住它们
+        return {
+          id: String(node.id ?? ''),
+          kind,
+          preview: '',
+          active: false,
+          children,
+        };
+      }
+
+      return {
+        id: String(node.id ?? ''),
+        kind,
+        role: typeof node.role === 'string' ? node.role : undefined,
+        preview: typeof node.preview === 'string' ? node.preview : '',
+        active: active.has(String(node.id ?? '')),
+        children,
+      };
+    };
+
+    const roots: TreeEntry[] = [];
+    for (const root of snapshot.roots as unknown as Array<Record<string, unknown>>) {
+      const converted = convert(root, true);
+      if (converted) roots.push(converted);
+    }
+    return roots;
+  }
+
+  /**
+   * 回到某个节点重来。
+   *
+   * 语义是「回到改写前重问」而不是「切换分支」：
+   * 引擎会把选中 user 消息的原文放回编辑器，用户改完再发就长出新枝。
+   * 所以这里把 draftText 一并带回去 —— 不返回的话用户得自己回忆刚才问的什么。
+   */
+  async navigateTree(sessionId: string, entryId: string): Promise<NavigateResult> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const result = await this.session!.navigateSessionTree(entryId, { summarize: false });
+    if (result.cancelled) throw new Error('切换被取消');
+
+    // 回到旧节点后，当前轮的状态作废（活在被丢掉的支上）
+    this.activeTurnId = null;
+
+    // 引擎给的时间线才是当前分支的真实内容。
+    // 数据库里还存着被丢弃那一支的消息 —— 它是历史存档，不该再显示。
+    const messages: UiMessage[] = [];
+    for (const row of result.messages) {
+      const mapped = historyToUiMessage(row);
+      if (mapped) messages.push(mapped);
+    }
+
+    return {
+      draftText: result.draftText,
+      activeCount: result.tree.activePathIds.length,
+      messages,
+    };
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {

@@ -1262,3 +1262,111 @@ body {
   padding: 0 2px;
 }
 .dirs-remove:hover:not(:disabled) { color: var(--danger); }
+
+/* 会话分支树面板 */
+.tree-panel {
+  position: absolute;
+  top: var(--topbar-h, 37px);
+  right: 0;
+  bottom: var(--composer-h, 92px);
+  width: min(460px, 58%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-elevated);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg, -8px 0 24px rgb(0 0 0 / 8%));
+}
+.tree-head {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.tree-title {
+  flex: 1 1 auto;
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  color: var(--text-primary);
+}
+.tree-close {
+  font-size: var(--text-16);
+  line-height: 1;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.tree-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+.tree-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-11);
+  line-height: var(--leading-relaxed);
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+.tree-body { flex: 1 1 auto; overflow: auto; padding: var(--space-2) 0; }
+.tree-empty {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-12);
+  color: var(--text-placeholder);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px var(--space-2) 3px 0;
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+}
+/* 不在活动路径上的节点淡化 —— 一眼看出哪条是「现在这条」 */
+.tree-row:not(.active) { opacity: 0.45; }
+.tree-row:hover { background: var(--surface-hover); }
+
+.tree-toggle {
+  flex: 0 0 auto;
+  width: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--text-11);
+  line-height: 1;
+  padding: 0;
+}
+.tree-role {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-11);
+}
+.tree-role.user { background: var(--ink); color: var(--text-inverse); }
+.tree-role.ai { background: var(--surface-chip); color: var(--text-tertiary); }
+.tree-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.tree-row.user .tree-preview { color: var(--text-primary); }
+.tree-replay {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: var(--text-11);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+}
+/* 悬停才露出来：重来是低频但危隖的动作，不该一直吸眼睛 */
+.tree-row:hover .tree-replay { opacity: 1; }
+.tree-replay:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.tree-replay:disabled { opacity: 0.4; cursor: default; }

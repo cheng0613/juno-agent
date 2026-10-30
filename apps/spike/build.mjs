@@ -34,6 +34,7 @@ await build({
     probeCompact: 'src/probeCompact.ts',
     probeModes: 'src/probeModes.ts',
     probeTasks: 'src/probeTasks.ts',
+    probeTree: 'src/probeTree.ts',
   },
   bundle: true,
   platform: 'node',

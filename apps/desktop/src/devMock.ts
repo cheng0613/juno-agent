@@ -175,6 +175,34 @@ export function createMockHost(): HostBridge {
     async pickDir() {
       return 'C:\\Users\\you\\Documents\\some-project';
     },
+    async sessionTree() {
+      return [
+        {
+          id: 'n1',
+          kind: 'message',
+          role: 'user',
+          preview: '第一句提问',
+          active: true,
+          children: [
+            {
+              id: 'n2',
+              kind: 'message',
+              role: 'assistant',
+              preview: '第一句回答',
+              active: true,
+              children: [],
+            },
+          ],
+        },
+      ];
+    },
+    async navigateTree() {
+      return {
+        draftText: '第一句提问',
+        activeCount: 1,
+        messages: [{ id: 'm1', role: 'user' as const, text: '第一句提问' }],
+      };
+    },
     async switchModel(_sessionId, modelId) {
       const listener = [...listeners].at(-1);
       listener?.({ type: 'model', modelId });
