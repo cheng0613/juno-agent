@@ -28,6 +28,9 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'chrome130',
+    // 'hidden' = 生成 .map 但不写 sourceMappingURL 注释：
+    // 错误边界里能显示可读堆栈，又不会让文件体积在控制台里暴露给用户。
+    sourcemap: 'hidden',
   },
   server: {
     port: 5273,

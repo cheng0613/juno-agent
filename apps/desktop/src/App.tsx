@@ -121,6 +121,12 @@ export function App() {
   /** 设置面板：没 key 时全屏拦截，否则是侧边抽屉 */
   const [settingsMode, setSettingsMode] = useState<'onboarding' | 'drawer' | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
+  /**
+   * 验收专用的崩溃开关。
+   * 验证错误边界必须有办法真的抛一次渲染异常，只看组件存在不算验。
+   * 只在 preload 挂了 __autotestInject（即 APP_AUTOTEST 开启）时才能触发。
+   */
+  const [crashForTest, setCrashForTest] = useState(false);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -157,6 +163,13 @@ export function App() {
     document.documentElement.classList.toggle('dark', next);
     localStorage.setItem(THEME_KEY, next ? 'dark' : 'light');
   };
+
+  // 把崩溃开关挂到 window 上（仅验收环境有 __autotestInject）
+  useEffect(() => {
+    if (typeof window.__autotestInject === 'undefined') return;
+    (window as unknown as { __crashForTest?: () => void }).__crashForTest = () =>
+      setCrashForTest(true);
+  }, []);
 
   /* ---------------- 首次拉状态 ---------------- */
   useEffect(() => {
@@ -659,7 +672,10 @@ export function App() {
   };
 
   return (
-    <div className="shell">
+    <>
+      {/* 验收专用：真的抛一次渲染异常，验证错误边界接得住 */}
+      {crashForTest && <CrashForTest />}
+      <div className="shell">
       {/* 首次启动没 key：全屏拦截，不让人看着界面发不了消息 */}
       {settingsMode === 'onboarding' && (
         <SettingsPanel
@@ -1054,5 +1070,11 @@ export function App() {
         </div>
       )}
     </div>
+    </>
   );
+}
+
+/** 只在验收里被渲染：无条件抛错，用来验证错误边界。 */
+function CrashForTest(): never {
+  throw new Error('autotest-render-crash');
 }

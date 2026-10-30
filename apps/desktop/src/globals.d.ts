@@ -8,3 +8,10 @@ declare module '*?raw' {
   const content: string;
   export default content;
 }
+
+/** 验收专用后门，只在 APP_AUTOTEST 开启时由 preload 挂载 */
+declare interface Window {
+  __autotestInject?: {
+    compactBoundary(sessionId: string): Promise<void>;
+  };
+}

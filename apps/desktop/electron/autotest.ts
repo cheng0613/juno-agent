@@ -2455,3 +2455,86 @@ export async function runRestartTest(win: BrowserWindow, runtime: HostRuntime): 
     app.quit();
   }
 }
+
+/**
+ * 错误边界验收。
+ *
+ * 两条都要验：
+ *   1. 渲染期异常 → 显示恢复页，不是白屏
+ *   2. 异步异常（未 catch 的 Promise）→ 弹提示，不是静默消失
+ *
+ * 单纯验「有 ErrorBoundary 组件」没意义 —— 要证明它真的接住了错误。
+ */
+export async function runErrorBoundaryTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/error] ${s}`);
+  };
+
+  try {
+    await delay(2500);
+    await runtime.ensureSession();
+    await delay(500);
+
+    /* ---- 1. 异步错误 → 应有 toast ---- */
+    await win.webContents.executeJavaScript(`
+      setTimeout(() => { Promise.reject(new Error('autotest-rejection')); }, 0);
+      'ok'
+    `);
+    await delay(1200);
+    const toast = await win.webContents.executeJavaScript(
+      `document.getElementById('global-error-toast') ? document.getElementById('global-error-toast').innerText : ''`,
+    );
+    note(`异步错误提示: ${JSON.stringify(String(toast).slice(0, 80))}`);
+    const sawToast = String(toast).includes('autotest-rejection');
+    await shootTo(win, '40-global-error');
+    note('截图 40-global-error');
+
+    if (!sawToast) throw new Error('异步错误没有弹出提示（被静默吞掉了）');
+
+    /* ---- 2. 渲染期异常 → 应有恢复页 ---- */
+    // 通过 App 里预埋的崩溃开关（只在 APP_AUTOTEST 下挂载）真正抛一次渲染错误。
+    // 单纯检查组件是否存在没意义 —— 要证明它真的接住了。
+    const triggered = await win.webContents.executeJavaScript(`
+      (() => {
+        if (typeof window.__crashForTest !== 'function') return 'no-hook';
+        window.__crashForTest();
+        return 'ok';
+      })()
+    `).catch(() => 'threw');
+    note(`触发渲染期错误: ${triggered}`);
+    await delay(1500);
+
+    const boundary = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="error-boundary"]').length`,
+    );
+    note(`恢复页数量: ${boundary}`);
+    await shootTo(win, '41-error-boundary');
+    note('截图 41-error-boundary');
+
+    if (boundary < 1) throw new Error('渲染期异常没有显示恢复页（白屏了）');
+
+    await fs.writeFile(
+      path.join(outDir, 'error-result.json'),
+      JSON.stringify({ ok: true, toast: String(toast).slice(0, 200), log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-error-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'error-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
