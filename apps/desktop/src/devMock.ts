@@ -168,6 +168,13 @@ export function createMockHost(): HostBridge {
       return [];
     },
     async stopTask() {},
+    async readExtraDirs() {
+      return { read: [], write: [] };
+    },
+    async setExtraDirs() {},
+    async pickDir() {
+      return 'C:\\Users\\you\\Documents\\some-project';
+    },
     async switchModel(_sessionId, modelId) {
       const listener = [...listeners].at(-1);
       listener?.({ type: 'model', modelId });

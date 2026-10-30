@@ -101,6 +101,34 @@ export function configFromEnv(): HostConfig {
 
 const logger = createConsoleLogger('host');
 
+/** 从库里的 JSON 字符串读目录名单；坏数据一律当空，不报错 */
+function parseDirList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 去空、去重、统一分隔符；同一目录不会因为写法不同被算两次 */
+function normalizeDirs(dirs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of dirs) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const normalized = path.resolve(trimmed);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
 /** 文件名里的非法字符：Windows 比 posix 严，统一按最严的来 */
 function sanitizeFileName(raw: string): string {
   const cleaned = raw
@@ -404,7 +432,63 @@ export class HostRuntime {
       title: meta.title,
     });
     this.attach(session);
+    // 重建会话后必须把额外目录重新交给引擎 —— 它们只存在于运行时，
+    // 不重放的话重启一次就白设了。
+    await this.reapplyExtraDirs(sessionId, session);
     return session.id;
+  }
+
+  /** 把库里记着的额外目录重新应用到引擎 */
+  private async reapplyExtraDirs(sessionId: string, session: Session): Promise<void> {
+    const dirs = this.readExtraDirs(sessionId);
+    if (dirs.read.length === 0 && dirs.write.length === 0) return;
+    try {
+      if (dirs.read.length > 0) await session.setExtraDirs(dirs.read);
+      if (dirs.write.length > 0) await session.setWritableDirs(dirs.write);
+    } catch (error) {
+      // 目录可能已经被删了。不能让一个失效设置把会话拦在门外。
+      logger.warn('重新应用额外目录失败', {
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** 读某会话的额外目录 */
+  readExtraDirs(sessionId: string): { read: string[]; write: string[] } {
+    const row = this.db
+      .prepare('SELECT extra_read_dirs, extra_write_dirs FROM sessions WHERE id = ?')
+      .get(sessionId) as { extra_read_dirs?: string; extra_write_dirs?: string } | undefined;
+    return {
+      read: parseDirList(row?.extra_read_dirs),
+      write: parseDirList(row?.extra_write_dirs),
+    };
+  }
+
+  /**
+   * 设置额外目录。落库 + 立即生效。
+   *
+   * 两个列表分开传：只读和可写是两个权限层级，
+   * 合并成一个列表会让用户以为「加进来就能写」。
+   */
+  async setExtraDirs(
+    sessionId: string,
+    dirs: { read: string[]; write: string[] },
+  ): Promise<void> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session = this.session!;
+
+    const read = normalizeDirs(dirs.read);
+    const write = normalizeDirs(dirs.write);
+
+    // 先落库再动引擎：万一引擎报错，至少设置不会丢；
+    // 反过来会出现「UI 上看着设了，重启后没了」。
+    this.db
+      .prepare('UPDATE sessions SET extra_read_dirs = ?, extra_write_dirs = ? WHERE id = ?')
+      .run(JSON.stringify(read), JSON.stringify(write), sessionId);
+
+    await session.setExtraDirs(read);
+    await session.setWritableDirs(write);
   }
 
   private attach(session: Session): void {

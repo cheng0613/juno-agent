@@ -206,4 +206,14 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_rules_lookup ON permission_rules(tool_name, subject);
     `,
   },
+  {
+    version: 4,
+    name: 'extra-dirs',
+    // 额外工作目录：read 只读、write 可写，两者权限层级不同，分开存。
+    // 存 JSON 数组而不是建关联表：数量很少，也不需要单独查询。
+    sql: `
+      ALTER TABLE sessions ADD COLUMN extra_read_dirs TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE sessions ADD COLUMN extra_write_dirs TEXT NOT NULL DEFAULT '[]';
+    `,
+  },
 ];

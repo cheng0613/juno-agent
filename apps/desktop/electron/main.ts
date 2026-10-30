@@ -7,13 +7,14 @@
  *   3. 事件用单向推送（webContents.send），请求用 invoke —— 不混用
  */
 import path from 'node:path';
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
 import {
   IPC,
   type ApproveInput,
   type BootstrapResult,
+  type ExtraDirs,
   type PermissionModeChoice,
   type SendInput,
 } from '../src/shared/ipc.js';
@@ -200,6 +201,24 @@ function registerIpc(): void {
     return runtime!.stopTask(sessionId, taskId);
   });
 
+  ipcMain.handle(IPC.readExtraDirs, async (_e, sessionId: string) => {
+    return runtime!.readExtraDirs(sessionId);
+  });
+
+  ipcMain.handle(IPC.setExtraDirs, async (_e, sessionId: string, dirs: ExtraDirs) => {
+    return runtime!.setExtraDirs(sessionId, dirs);
+  });
+
+  ipcMain.handle(IPC.pickDir, async () => {
+    if (!win) return null;
+    // 用系统对话框而不是让用户手打路径：跨平台路径差异很容易写错
+    const picked = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory'],
+      title: '选择一个目录',
+    });
+    return picked.canceled ? null : (picked.filePaths[0] ?? null);
+  });
+
   // 只在自动化验收时开的后门：伪造一条穿透引擎的压缩边界。
   // pi 的手动压缩有内置下限，小会话永远 noop，用真实 API 堆到那个量级不经济；
   // 而我们要验的「事件→落库→渲染」那半条链路，能用一个真实事件完整跑一遍。
@@ -287,9 +306,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=model      → 验模型热切换（需 APP_MODELS 配两个）
   //   APP_AUTOTEST=export     → 验导出 HTML
   //   APP_AUTOTEST=task       → 验子任务进度
+  //   APP_AUTOTEST=dirs       → 验额外工作目录
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -312,7 +332,9 @@ app.whenReady().then(async () => {
                         ? runExportTest(win, runtime)
                         : mode === 'task'
                           ? runTaskTest(win, runtime)
-                          : runAutotest(win, runtime)
+                          : mode === 'dirs'
+                            ? runExtraDirsTest(win, runtime)
+                            : runAutotest(win, runtime)
     );
   }
 

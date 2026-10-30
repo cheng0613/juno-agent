@@ -47,6 +47,12 @@ export const IPC = {
   listTasks: 'host:list-tasks',
   /** 渲染 → 主：停后台任务 */
   stopTask: 'host:stop-task',
+  /** 渲染 → 主：读额外目录 */
+  readExtraDirs: 'host:read-extra-dirs',
+  /** 渲染 → 主：设额外目录 */
+  setExtraDirs: 'host:set-extra-dirs',
+  /** 渲染 → 主：弹目录选择框 */
+  pickDir: 'host:pick-dir',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -156,6 +162,12 @@ export interface TaskInfo {
   taskCount?: number;
 }
 
+/** 额外工作目录。只读与可写必须分开 —— 权限层级不同 */
+export interface ExtraDirs {
+  read: string[];
+  write: string[];
+}
+
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
   | { type: 'text'; turnId: string; text: string; isFinal: boolean }
@@ -262,6 +274,10 @@ export interface HostBridge {
   listTasks(sessionId: string): Promise<TaskInfo[]>;
   /** 停掉一个后台任务 */
   stopTask(sessionId: string, taskId: string): Promise<void>;
+  readExtraDirs(sessionId: string): Promise<ExtraDirs>;
+  setExtraDirs(sessionId: string, dirs: ExtraDirs): Promise<void>;
+  /** 弹系统目录选择框；取消返回 null */
+  pickDir(): Promise<string | null>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

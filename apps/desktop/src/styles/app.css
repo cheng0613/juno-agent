@@ -1143,3 +1143,122 @@ body {
   max-height: 240px;
   overflow: auto;
 }
+
+/* 额外工作目录面板 */
+.dirs-panel {
+  position: absolute;
+  top: var(--topbar-h, 37px);
+  right: 0;
+  bottom: var(--composer-h, 92px);
+  width: min(420px, 55%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-3);
+  background: var(--surface-elevated);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg, -8px 0 24px rgb(0 0 0 / 8%));
+  overflow: auto;
+}
+.dirs-head {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.dirs-title {
+  flex: 1 1 auto;
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  color: var(--text-primary);
+}
+.dirs-close {
+  font-size: var(--text-16);
+  line-height: 1;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.dirs-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+.dirs-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-11);
+  line-height: var(--leading-relaxed);
+  color: var(--text-tertiary);
+}
+
+.dirs-section { padding: var(--space-2) var(--space-4) var(--space-3); }
+.dirs-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.dirs-label {
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.dirs-write .dirs-label { color: var(--warning); }
+.dirs-hint {
+  flex: 1 1 auto;
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+}
+.dirs-add {
+  flex: 0 0 auto;
+  font-size: var(--text-11);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+}
+.dirs-add:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+
+.dirs-empty {
+  margin: 0;
+  font-size: var(--text-11);
+  color: var(--text-placeholder);
+}
+.dirs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.dirs-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.dirs-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;             /* 长路径保留尾部目录名 */
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  color: var(--text-secondary);
+}
+.dirs-remove {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--text-13);
+  line-height: 1;
+  padding: 0 2px;
+}
+.dirs-remove:hover:not(:disabled) { color: var(--danger); }

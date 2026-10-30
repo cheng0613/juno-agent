@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
+import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
 import { TaskCard } from './TaskCard';
 import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
   ContextUsage,
+  ExtraDirs,
   HostBridge,
   InterruptedTurn,
   ModeState,
@@ -101,6 +103,9 @@ export function App() {
   const [exporting, setExporting] = useState(false);
   /** 子任务；引擎推的是全量快照，直接替换 */
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  /** 额外工作目录 */
+  const [extraDirs, setExtraDirs] = useState<ExtraDirs>({ read: [], write: [] });
+  const [dirsOpen, setDirsOpen] = useState(false);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -151,6 +156,7 @@ export function App() {
       if (boot.activeSessionId) {
         void host.contextUsage(boot.activeSessionId).then(setUsage);
         void host.readModes(boot.activeSessionId).then(setModes);
+        void host.readExtraDirs(boot.activeSessionId).then(setExtraDirs);
       }
     })();
   }, [host]);
@@ -437,6 +443,27 @@ export function App() {
     [activeId, host],
   );
 
+  /**
+   * 改额外目录并立即生效。
+   *
+   * 不先在本地撤销再写：权限一旦变了，界面应该反映引擎真实状态，
+   * 所以写完重新读一次。
+   */
+  const applyExtraDirs = useCallback(
+    async (next: ExtraDirs) => {
+      if (!activeId) return;
+      try {
+        await host.setExtraDirs(activeId, next);
+        setExtraDirs(await host.readExtraDirs(activeId));
+      } catch (error) {
+        setNotice(`设置失败：${error instanceof Error ? error.message : String(error)}`);
+        // 失败时也重读，让界面回到真实状态
+        setExtraDirs(await host.readExtraDirs(activeId));
+      }
+    },
+    [activeId, host],
+  );
+
   const exportHtml = useCallback(async () => {
     if (!activeId) return;
     setExporting(true);
@@ -499,6 +526,8 @@ export function App() {
     setTasks([]);
     void host.contextUsage(id).then(setUsage);
     void host.readModes(id).then(setModes);
+    void host.readExtraDirs(id).then(setExtraDirs);
+    setDirsOpen(false);
   };
 
   const newSession = async () => {
@@ -511,6 +540,8 @@ export function App() {
     setTurnDiff(null);
     setDiffOpen(false);
     setTasks([]);
+    setExtraDirs({ read: [], write: [] });
+    setDirsOpen(false);
   };
 
   const answer = async (behavior: 'allow' | 'deny') => {
@@ -649,6 +680,23 @@ export function App() {
           )}
           <button
             className="ghost topbar-action"
+            disabled={!activeId}
+            title="让它也能访问别的目录"
+            onClick={() => {
+              const next = !dirsOpen;
+              setDirsOpen(next);
+              // 打开时自己拉一次：目录可能被改过（比如另一个窗口、或者重启后），
+              // 只靠 state 会把陈旧的列表给人看
+              if (next && activeId) void host.readExtraDirs(activeId).then(setExtraDirs);
+            }}
+          >
+            目录
+            {extraDirs.read.length + extraDirs.write.length > 0
+              ? ` ${extraDirs.read.length + extraDirs.write.length}`
+              : ''}
+          </button>
+          <button
+            className="ghost topbar-action"
             disabled={!activeId || messages.length === 0 || exporting}
             title="把这段对话导出成一个 HTML 文件"
             onClick={() => void exportHtml()}
@@ -737,6 +785,15 @@ export function App() {
 
         {turnDiff && diffOpen && (
           <DiffPanel payload={turnDiff} onClose={() => setDiffOpen(false)} />
+        )}
+        {dirsOpen && (
+          <ExtraDirsPanel
+            dirs={extraDirs}
+            disabled={!activeId}
+            onChange={(next) => void applyExtraDirs(next)}
+            onClose={() => setDirsOpen(false)}
+            onPick={() => host.pickDir()}
+          />
         )}
       </main>
 

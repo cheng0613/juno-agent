@@ -93,6 +93,9 @@ APP_AUTOTEST=export node scripts/launch.mjs           # 导出并校验磁盘上
 # ---- 验子任务进度 ----
 APP_AUTOTEST=task node scripts/launch.mjs             # 让模型拆三个子任务，卡片应出现且最终转 completed
 
+# ---- 验额外工作目录 ----
+APP_AUTOTEST=dirs node scripts/launch.mjs             # 设完后模型能读到外部目录，resume 后仍在
+
 # ---- CLI（验证数据层，不需要 key）----
 cd apps/spike
 node build.mjs
@@ -115,7 +118,7 @@ node dist/selftest.js        # 6/6
 | `APP_EXPORT_DIR` | `%USERPROFILE%/Documents/Agent 导出` | 导出 HTML 的落地目录 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -172,6 +175,7 @@ node dist/selftest.js        # 6/6
 - 模型热切换：多模型时出现下拉、切后 UI 跟随、未知模型被拒且不改动当前值
 - 导出 HTML：真去磁盘查文件（313 KB），内容含对话、无外部引用（自包含单文件）
 - 子任务：模型真的拆出 3 个子任务，卡片从「1 个进行中」转为「全部结束」
+- 额外工作目录：模型真读到外部目录里的标记内容；resume 后仍在，清空后归零
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

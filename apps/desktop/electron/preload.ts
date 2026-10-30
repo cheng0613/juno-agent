@@ -33,6 +33,9 @@ const bridge: HostBridge = {
   exportHtml: (sessionId) => ipcRenderer.invoke(IPC.exportHtml, sessionId),
   listTasks: (sessionId) => ipcRenderer.invoke(IPC.listTasks, sessionId),
   stopTask: (sessionId, taskId) => ipcRenderer.invoke(IPC.stopTask, sessionId, taskId),
+  readExtraDirs: (sessionId) => ipcRenderer.invoke(IPC.readExtraDirs, sessionId),
+  setExtraDirs: (sessionId, dirs) => ipcRenderer.invoke(IPC.setExtraDirs, sessionId, dirs),
+  pickDir: () => ipcRenderer.invoke(IPC.pickDir),
 
   onEvent: (listener) => {
     // 只把 payload 交给渲染层，不暴露 event 对象（含 sender 等能力）

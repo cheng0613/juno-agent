@@ -1527,3 +1527,138 @@ export async function runTaskTest(win: BrowserWindow, runtime: HostRuntime): Pro
     app.quit();
   }
 }
+
+/**
+ * 额外工作目录验收。
+ *
+ * 两个层次：
+ *   1. 设置后落库、UI 显示正确（只读/可写分开）
+ *   2. **重启后还在** —— 这才是真考验，因为目录只存在于运行时，
+ *      不在 resume 时重放的话重启就白设了
+ */
+export async function runExtraDirsTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/dirs] ${s}`);
+  };
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  try {
+    await delay(2200);
+    // 不额外 createSession：那会让宿主新建一个会话，而 App 的 activeId
+    // 还是 bootstrap 时那个 —— 两者不同步，后面读目录就取不到。
+    const sessionId = await runtime.ensureSession();
+    note(`当前会话: ${sessionId}`);
+
+    // 造一个工作目录之外的真实目录，里面有唯一标记文件
+    const outside = path.join(outDirOf(), '..', '.appdata', 'outside-dir');
+    await fs.mkdir(outside, { recursive: true });
+    const marker = 'EXTRA-DIR-MARKER-7c3f';
+    await fs.writeFile(path.join(outside, 'mark.txt'), marker, 'utf8');
+    note(`外部目录: ${outside}`);
+
+    const before = await runtime.readExtraDirs(sessionId);
+    note(`设置前: ${JSON.stringify(before)}`);
+    if (before.read.length !== 0) throw new Error('初始状态不该已有只读目录');
+
+    await runtime.setExtraDirs(sessionId, { read: [outside], write: [] });
+    await delay(600);
+
+    const after = await runtime.readExtraDirs(sessionId);
+    note(`设置后: ${JSON.stringify(after)}`);
+    if (after.read.length !== 1) throw new Error(`只读目录没存上: ${JSON.stringify(after)}`);
+
+    // 点开面板 —— 面板自己会重新拉一次目录列表
+    await win.webContents.executeJavaScript(
+      `(() => { const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('目录')); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(900);
+    const panelRows = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.dirs-item').length`,
+    );
+    note(`面板条目数: ${panelRows}`);
+    await shootTo(win, '29-extra-dirs');
+    note('截图 29-extra-dirs');
+    if (panelRows < 1) throw new Error('面板里没显示已添加的目录');
+
+    // 让模型读那个目录 —— 证明权限真的生效，不只是记了一条配置
+    turnsDone = 0;
+    // 路径在 TS 里先转成正斜杠，避免在嵌套模板字符串里做转义
+    const outsidePosix = outside.split(path.sep).join('/');
+    const ask = `用 bash 读取 ${outsidePosix}/mark.txt 并原样告诉我内容`;
+    const typed = await win.webContents.executeJavaScript(`
+      (() => {
+        const ta = document.querySelector('textarea');
+        if (!ta) return 'no-textarea';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, ${JSON.stringify(ask)});
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return 'ok';
+      })()
+    `);
+    note(`发送读取请求: ${typed}`);
+    await waitFor(() => turnsDone >= 1, 180_000, '读取外部目录这一轮');
+    await delay(800);
+
+    const answers = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.bubble-ai')].map(e => e.innerText).join(' ')`,
+    );
+    const sawMarker = String(answers).includes(marker);
+    note(`模型读到了标记内容: ${sawMarker}`);
+    await shootTo(win, '30-extra-dirs-read');
+    note('截图 30-extra-dirs-read');
+
+    // 重放校验：模拟重启后 resume，目录必须还在
+    await runtime.resume(sessionId);
+    await delay(600);
+    const afterResume = await runtime.readExtraDirs(sessionId);
+    note(`resume 后: ${JSON.stringify(afterResume)}`);
+    if (afterResume.read.length !== 1) throw new Error('resume 后只读目录丢了');
+
+    // 清空要能生效
+    await runtime.setExtraDirs(sessionId, { read: [], write: [] });
+    await delay(400);
+    const cleared = await runtime.readExtraDirs(sessionId);
+    note(`清空后: ${JSON.stringify(cleared)}`);
+    if (cleared.read.length !== 0) throw new Error('清空后仍残留');
+
+    if (!sawMarker) throw new Error('模型没读到外部目录里的内容，权限可能没生效');
+
+    await fs.writeFile(
+      path.join(outDir, 'dirs-result.json'),
+      JSON.stringify({ ok: true, outside, afterResume, panelRows, sawMarker, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-dirs-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'dirs-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
