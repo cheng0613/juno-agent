@@ -794,8 +794,18 @@ export async function runSteerTest(win: BrowserWindow, runtime: HostRuntime): Pr
     await win.webContents.executeJavaScript(
       typeAndEnter('从 1 数到 30，每个数字单独一行，不要任何解释'),
     );
-    // 等它开始吐字，再插话 —— 太早插话这一轮可能还没真正开始
-    await delay(1500);
+    // 插话窗口很窄：模型数数很快，固定 delay 会赶上「已经数完」。
+    // 改成一旦看到有流式输出就立刻插，最多等 3 秒。
+    const startedAt = Date.now();
+    let sawStreaming = false;
+    while (Date.now() - startedAt < 3000) {
+      sawStreaming = await win.webContents.executeJavaScript(
+        `document.querySelectorAll('.bubble-ai.streaming').length > 0`,
+      );
+      if (sawStreaming) break;
+      await delay(80);
+    }
+    note(`已开始流式输出: ${sawStreaming}`);
 
     const steered = await win.webContents.executeJavaScript(
       typeAndEnter('马上停，只数到 5 就结束'),
@@ -1404,6 +1414,110 @@ export async function runExportTest(win: BrowserWindow, runtime: HostRuntime): P
     await fs
       .writeFile(
         path.join(outDir, 'export-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 子任务进度验收。
+ *
+ * 这个功能之前一直为空，根因是宿主没传 spawnPiSubagentRunner ——
+ * pi 的 subagent 扩展根本不会被写入，模型连 subagent 工具都没有。
+ * 所以这里必须验「模型真的把活派出去了」，而不是验「API 没报错」。
+ */
+export async function runTaskTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/task] ${s}`);
+  };
+
+  let turnsDone = 0;
+  let taskEvents = 0;
+  let lastTasks: Array<{ taskId: string; title: string; status: string }> = [];
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+    if (e.type === 'tasks') {
+      taskEvents += 1;
+      lastTasks = e.tasks;
+    }
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  try {
+    await delay(2200);
+    await win.webContents.executeJavaScript('window.host.createSession()');
+    await delay(300);
+
+    // 走 UI 输入路径，这样 React 侧也会收到 tasks 事件
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const ta = document.querySelector('textarea');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '把「列举三种排序算法并各写一句说明」拆成三个子任务并行做，最后汇总');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return 'ok';
+      })()
+    `);
+    note('已发送拆任务请求');
+
+    await waitFor(() => taskEvents > 0, 180_000, '收到子任务事件');
+    note(`子任务事件数: ${taskEvents} / 任务数: ${lastTasks.length}`);
+    note(`任务: ${JSON.stringify(lastTasks.map((t) => ({ title: t.title.slice(0, 20), status: t.status })))}`);
+
+    await delay(1200);
+    const cardCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.task-card').length`,
+    );
+    const itemCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.task-item').length`,
+    );
+    note(`界面卡片数: ${cardCount} / 条目数: ${itemCount}`);
+    await shootTo(win, '27-tasks');
+    note('截图 27-tasks');
+
+    if (cardCount < 1) throw new Error('界面没有出现子任务卡片');
+    if (itemCount < 1) throw new Error('子任务条目为空');
+
+    // 等这一轮结束，确认任务最终状态不是一直 running
+    await waitFor(() => turnsDone >= 1, 240_000, '这一轮结束');
+    await delay(1500);
+    const finalStatuses = lastTasks.map((t) => t.status);
+    note(`最终状态: ${JSON.stringify(finalStatuses)}`);
+    const stillRunning = finalStatuses.filter((s) => s === 'running').length;
+    note(`仍标 running 的数量: ${stillRunning}`);
+    await shootTo(win, '28-tasks-done');
+    note('截图 28-tasks-done');
+
+    await fs.writeFile(
+      path.join(outDir, 'task-result.json'),
+      JSON.stringify({ ok: true, taskEvents, tasks: lastTasks, cardCount, itemCount, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-task-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'task-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )

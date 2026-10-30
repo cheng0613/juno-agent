@@ -43,6 +43,10 @@ export const IPC = {
   switchModel: 'host:switch-model',
   /** 渲染 → 主：导出会话为 HTML */
   exportHtml: 'host:export-html',
+  /** 渲染 → 主：列后台任务 */
+  listTasks: 'host:list-tasks',
+  /** 渲染 → 主：停后台任务 */
+  stopTask: 'host:stop-task',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -141,6 +145,17 @@ export interface TurnDiffPayload {
   truncated: boolean;
 }
 
+/** 一个正在跑的 subagent 任务 */
+export interface TaskInfo {
+  taskId: string;
+  title: string;
+  /** running / done / error 等，原样透传引擎状态 */
+  status: string;
+  description?: string;
+  /** 子任务数（pi 把多任务捆在一个 spawn 里） */
+  taskCount?: number;
+}
+
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
   | { type: 'text'; turnId: string; text: string; isFinal: boolean }
@@ -156,6 +171,8 @@ export type HostEvent =
   | ({ type: 'turn_diff'; turnId: string } & TurnDiffPayload)
   | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean; effort: string | null; effortLevels: string[] }
   | { type: 'model'; modelId: string }
+  /** 子任务进度：状态快照，UI 直接整张表替换 */
+  | { type: 'tasks'; tasks: TaskInfo[] }
   | { type: 'error'; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
@@ -241,6 +258,10 @@ export interface HostBridge {
   switchModel(sessionId: string, modelId: string): Promise<{ rebuilt: boolean }>;
   /** 导出会话为 HTML，返回落盘的绝对路径 */
   exportHtml(sessionId: string): Promise<string>;
+  /** 当前后台任务快照（主要用于面板初次打开） */
+  listTasks(sessionId: string): Promise<TaskInfo[]>;
+  /** 停掉一个后台任务 */
+  stopTask(sessionId: string, taskId: string): Promise<void>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

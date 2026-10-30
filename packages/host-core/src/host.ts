@@ -14,6 +14,7 @@
  *   - 不接 Electron（Phase 3）
  */
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 
 import {
@@ -217,6 +218,31 @@ export function createPiAgent(opts: PiHostOptions): PiAgent {
             effortsUnknown: (m.efforts ?? efforts).length === 0,
           })),
       ],
+    },
+    // 子代理运行器：pi 把 subagent 当独立进程跑，状态写磁盘上的 status.json。
+    // 宿主只需把它拉起来 —— 不传这个依赖，subagent 扩展根本不会被写入，
+    // 模型也就没有 subagent 工具可用（后台任务列表会永远是空的）。
+    spawnPiSubagentRunner: (request) => {
+      const child = spawn(process.execPath, [request.runnerFile, request.configFile], {
+        cwd: request.cwd,
+        env: {
+          ...request.env,
+          // 子进程与主进程同一个 Electron/Node 运行时；不加这个，
+          // 打包后的 Electron 里 process.execPath 指向 electron.exe，会当成开新窗口
+          ELECTRON_RUN_AS_NODE: '1',
+        },
+        // 输出走磁盘（status.json / output 文件），不需要管道；
+        // 管道不消费会在缓冲区满时把子进程卡死。
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.on('error', (error) => {
+        logger.warn('pi subagent runner failed to spawn', {
+          runId: request.runId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return child;
     },
     resolveModelContextLimit: () => opts.contextWindow ?? 200_000,
     // 不设就交给 pi 自己的默认策略（约 90%），宿主不擅自改运维口径

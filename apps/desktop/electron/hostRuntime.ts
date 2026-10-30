@@ -40,6 +40,7 @@ import type {
   InterruptedTurn,
   ModeState,
   PermissionModeChoice,
+  TaskInfo,
 } from '../src/shared/ipc.js';
 
 import {
@@ -180,6 +181,9 @@ export class HostRuntime {
    * 而 UI 总得知道现在是什么状态。这里存的是「最后一次确认过的值」。
    */
   private modes: ModeState = { permissionMode: 'ask', planMode: false, effort: null, effortLevels: [] };
+
+  /** 引擎推来的子任务，按 taskId 聚合成最新快照 */
+  private readonly taskMap = new Map<string, TaskInfo>();
 
   /** 可选模型清单。启动时解析一次，运行期不变 */
   private readonly catalog: ReturnType<typeof parseModelCatalog>;
@@ -631,8 +635,11 @@ export class HostRuntime {
         });
         return;
       }
-      case 'plan_mode_changed': {
-        // agent 自己也会切计划模式（比如计划批准后自动退出），
+      case 'agent_task_update': {
+        this.trackTask(event.data as Record<string, unknown>);
+        return;
+      }
+      case 'plan_mode_changed': {        // agent 自己也会切计划模式（比如计划批准后自动退出），
         // 不同步的话 UI 上那个开关会与实际状态相反
         const d = (event.data ?? {}) as { enabled?: boolean };
         if (typeof d.enabled === 'boolean') {
@@ -863,6 +870,52 @@ export class HostRuntime {
     const outputPath = path.join(dir, `${title}-${stamp}.html`);
 
     return await this.session!.exportSessionHtml(outputPath);
+  }
+
+  /**
+   * 子任务进度。
+   *
+   * 引擎会高频推同一条任务（每几百毫秒一次 progress），每次都广播会把 IPC 刷爆，
+   * 而 UI 实际上只关心「有哪些任务、各自什么状态」。所以这里只在
+   * 「任务集合或状态真的变了」时广播。
+   */
+  private trackTask(data: Record<string, unknown>): void {
+    const taskId = typeof data.taskId === 'string' ? data.taskId : '';
+    if (!taskId) return;
+    const status = typeof data.status === 'string' ? data.status : 'running';
+    const title = typeof data.title === 'string' && data.title ? data.title : taskId;
+    const description = typeof data.description === 'string' ? data.description : undefined;
+
+    const before = this.taskMap.get(taskId);
+    // 已完成/失败的任务留在表里（用户想看结果），不删
+    this.taskMap.set(taskId, { taskId, title, status, description });
+
+    const changed = !before || before.status !== status || before.title !== title;
+    if (!changed) return;
+
+    this.emit({ type: 'tasks', tasks: [...this.taskMap.values()] });
+  }
+
+  /** 后台任务快照（面板初次打开用） */
+  async listTasks(sessionId: string): Promise<TaskInfo[]> {
+    if (!this.session || this.session.id !== sessionId) return [...this.taskMap.values()];
+    // 引擎侧列表只含「未结束」的 subagent；已结束的留在我们自己记的表里
+    for (const running of this.session.listBackgroundTasks()) {
+      const existing = this.taskMap.get(running.taskId);
+      if (!existing) {
+        this.taskMap.set(running.taskId, {
+          taskId: running.taskId,
+          title: running.title ?? running.taskId,
+          status: 'running',
+        });
+      }
+    }
+    return [...this.taskMap.values()];
+  }
+
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    await this.session!.stopBackgroundTask(taskId);
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {

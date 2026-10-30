@@ -1065,3 +1065,81 @@ body {
   color: var(--text-secondary);
 }
 .model-select:disabled { opacity: 0.5; cursor: default; }
+
+/* 子任务卡片：跟在对话流末尾，说明「这一轮派了哪些活」 */
+.task-card {
+  margin: var(--space-4) 0 var(--space-2);
+  max-width: 760px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+  overflow: hidden;
+}
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.task-title {
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  color: var(--text-primary);
+}
+.task-summary {
+  margin-left: auto;
+  font-size: var(--text-11);
+  line-height: var(--text-11-lh);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.task-list { display: flex; flex-direction: column; }
+.task-item { border-bottom: 1px solid var(--border); }
+.task-item:last-child { border-bottom: 0; }
+.task-item > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+}
+.task-item > summary::-webkit-details-marker { display: none; }
+.task-item > summary:hover { background: var(--surface-hover); }
+.task-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.task-stop {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: var(--text-11);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.task-stop:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.task-desc {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow: auto;
+}

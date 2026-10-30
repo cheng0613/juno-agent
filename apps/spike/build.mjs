@@ -33,6 +33,7 @@ await build({
     selftest: 'src/selftest.ts',
     probeCompact: 'src/probeCompact.ts',
     probeModes: 'src/probeModes.ts',
+    probeTasks: 'src/probeTasks.ts',
   },
   bundle: true,
   platform: 'node',

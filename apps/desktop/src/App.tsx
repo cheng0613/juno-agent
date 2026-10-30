@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
 import { ModeControls } from './ModeControls';
+import { TaskCard } from './TaskCard';
 import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
@@ -12,6 +13,7 @@ import type {
   ModeState,
   PermissionModeChoice,
   SessionSummary,
+  TaskInfo,
   TurnDiffPayload,
   UiMessage,
 } from './shared/ipc';
@@ -97,6 +99,8 @@ export function App() {
   const [queued, setQueued] = useState<string[]>([]);
   const [compacting, setCompacting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** 子任务；引擎推的是全量快照，直接替换 */
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -245,6 +249,11 @@ export function App() {
 
         case 'steer': {
           // 插话已经在发送时乐观插入了，这里只防止重复（重载后会换成库里的那条）
+          return;
+        }
+
+        case 'tasks': {
+          setTasks(event.tasks);
           return;
         }
 
@@ -416,6 +425,18 @@ export function App() {
     [activeId, model, host],
   );
 
+  const stopTask = useCallback(
+    async (taskId: string) => {
+      if (!activeId) return;
+      try {
+        await host.stopTask(activeId, taskId);
+      } catch (error) {
+        setNotice(`停止失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [activeId, host],
+  );
+
   const exportHtml = useCallback(async () => {
     if (!activeId) return;
     setExporting(true);
@@ -474,6 +495,8 @@ export function App() {
     // 改动面板属于上一轮的，切会话必须清掉，否则会误以为新会话改过文件
     setTurnDiff(null);
     setDiffOpen(false);
+    // 子任务也属于上一会话
+    setTasks([]);
     void host.contextUsage(id).then(setUsage);
     void host.readModes(id).then(setModes);
   };
@@ -487,6 +510,7 @@ export function App() {
     setUsage(null);
     setTurnDiff(null);
     setDiffOpen(false);
+    setTasks([]);
   };
 
   const answer = async (behavior: 'allow' | 'deny') => {
@@ -643,6 +667,12 @@ export function App() {
 
         <div className="scroller" ref={scrollerRef}>
           <Chat messages={messages} liveText={liveText} running={running} />
+          {tasks.length > 0 && (
+            <TaskCard
+              tasks={tasks}
+              onStop={(taskId) => void stopTask(taskId)}
+            />
+          )}
         </div>
 
         <div className="composer-wrap">
