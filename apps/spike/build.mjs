@@ -32,6 +32,7 @@ await build({
     main: 'src/main.ts',
     selftest: 'src/selftest.ts',
     probeCompact: 'src/probeCompact.ts',
+    probeModes: 'src/probeModes.ts',
   },
   bundle: true,
   platform: 'node',

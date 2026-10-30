@@ -1036,3 +1036,11 @@ body {
   border-color: var(--danger);
   color: #fff;
 }
+
+/* 思考档位下拉：比权限菜单窄，只有一列 */
+.mode-effort { position: relative; }
+.mode-menu-narrow {
+  width: 148px;
+  left: 0;
+  right: auto;
+}

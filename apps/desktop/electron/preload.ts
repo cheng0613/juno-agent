@@ -27,6 +27,7 @@ const bridge: HostBridge = {
     ipcRenderer.invoke(IPC.setPermissionMode, sessionId, mode),
   setPlanMode: (sessionId, enabled) => ipcRenderer.invoke(IPC.setPlanMode, sessionId, enabled),
   readModes: (sessionId) => ipcRenderer.invoke(IPC.readModes, sessionId),
+  setEffort: (sessionId, effort) => ipcRenderer.invoke(IPC.setEffort, sessionId, effort),
 
   onEvent: (listener) => {
     // 只把 payload 交给渲染层，不暴露 event 对象（含 sender 等能力）

@@ -35,6 +35,8 @@ export const IPC = {
   setPlanMode: 'host:set-plan-mode',
   /** 渲染 → 主：拿当前权限/计划状态 */
   readModes: 'host:read-modes',
+  /** 渲染 → 主：切思考档位 */
+  setEffort: 'host:set-effort',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -146,7 +148,7 @@ export type HostEvent =
   | { type: 'compact'; turnId: string | null; trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null }
   | { type: 'steer'; turnId: string; text: string }
   | ({ type: 'turn_diff'; turnId: string } & TurnDiffPayload)
-  | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean }
+  | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean; effort: string | null; effortLevels: string[] }
   | { type: 'error'; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
@@ -176,6 +178,10 @@ export interface PermissionModeInfo {
 export interface ModeState {
   permissionMode: PermissionModeChoice;
   planMode: boolean;
+  /** 当前思考档位；null = 这个模型不支持 */
+  effort: string | null;
+  /** 支持的档位 id，空数组 = 不支持 */
+  effortLevels: string[];
 }
 
 /**
@@ -222,6 +228,7 @@ export interface HostBridge {
   contextUsage(sessionId: string): Promise<ContextUsage | null>;
   setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void>;
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
+  setEffort(sessionId: string, effort: string): Promise<void>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

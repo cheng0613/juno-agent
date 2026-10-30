@@ -100,6 +100,7 @@ node dist/selftest.js        # 6/6
 | `APP_APPROVAL` | `ipc` | `ipc` = 弹审批卡；`allow` = 全放行 |
 | `APP_CONTEXT_WINDOW` | `200000` | 上下文窗口，用于 models.json 与压缩判定 |
 | `APP_COMPACT_PCT` | 由 pi 决定（约 90） | 自动压缩在窗口的百分之几处触发；值越小压得越早 |
+| `APP_EFFORTS` | 空 = 不支持思考档位 | 逗号分隔的档位，如 `minimal,low,medium,high,xhigh,max`；**配置后才在 UI 显示** |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
 | `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式 |
@@ -155,6 +156,7 @@ node dist/selftest.js        # 6/6
 - 本轮改动面板：真实创建文件后列出 +1，展开能看到 `+hello`
 - 权限档位：全放行需二次确认；切到 auto 后审批次数 0
 - 计划模式：开关往返正常
+- 思考档位：未配置 `APP_EFFORTS` 时不显示；配置后 6 档可切、非法值被拒
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

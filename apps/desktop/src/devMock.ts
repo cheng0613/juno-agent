@@ -116,14 +116,41 @@ export function createMockHost(): HostBridge {
     },
     async setPermissionMode(_sessionId, mode) {
       const listener = [...listeners].at(-1);
-      listener?.({ type: 'modes', permissionMode: mode, planMode: false });
+      listener?.({
+        type: 'modes',
+        permissionMode: mode,
+        planMode: false,
+        effort: 'medium',
+        effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      });
     },
     async setPlanMode(_sessionId, enabled) {
       const listener = [...listeners].at(-1);
-      listener?.({ type: 'modes', permissionMode: 'ask', planMode: enabled });
+      listener?.({
+        type: 'modes',
+        permissionMode: 'ask',
+        planMode: enabled,
+        effort: 'medium',
+        effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      });
+    },
+    async setEffort(_sessionId, effort) {
+      const listener = [...listeners].at(-1);
+      listener?.({
+        type: 'modes',
+        permissionMode: 'ask',
+        planMode: false,
+        effort,
+        effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      });
     },
     async readModes() {
-      return { permissionMode: 'ask' as const, planMode: false };
+      return {
+        permissionMode: 'ask' as const,
+        planMode: false,
+        effort: 'medium',
+        effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      };
     },
     onEvent(listener) {
       listeners.add(listener);

@@ -175,6 +175,10 @@ function registerIpc(): void {
     return runtime!.readModes(sessionId);
   });
 
+  ipcMain.handle(IPC.setEffort, async (_e, sessionId: string, effort: string) => {
+    return runtime!.setEffort(sessionId, effort);
+  });
+
   // 只在自动化验收时开的后门：伪造一条穿透引擎的压缩边界。
   // pi 的手动压缩有内置下限，小会话永远 noop，用真实 API 堆到那个量级不经济；
   // 而我们要验的「事件→落库→渲染」那半条链路，能用一个真实事件完整跑一遍。

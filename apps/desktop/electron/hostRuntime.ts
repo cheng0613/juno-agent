@@ -161,7 +161,7 @@ export class HostRuntime {
    * 为什么要在宿主侧存一份：引擎的 getPlanMode() 可能返回 null，
    * 而 UI 总得知道现在是什么状态。这里存的是「最后一次确认过的值」。
    */
-  private modes: ModeState = { permissionMode: 'ask', planMode: false };
+  private modes: ModeState = { permissionMode: 'ask', planMode: false, effort: null, effortLevels: [] };
 
   constructor(private readonly cfg: HostConfig) {}
 
@@ -600,11 +600,7 @@ export class HostRuntime {
         const d = (event.data ?? {}) as { enabled?: boolean };
         if (typeof d.enabled === 'boolean') {
           this.modes.planMode = d.enabled;
-          this.emit({
-            type: 'modes',
-            permissionMode: this.modes.permissionMode,
-            planMode: d.enabled,
-          });
+          this.emitModes();
         }
         return;
       }
@@ -752,14 +748,42 @@ export class HostRuntime {
     if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
     await this.session!.setPermissionMode(mode);
     this.modes.permissionMode = mode;
-    this.emit({ type: 'modes', permissionMode: mode, planMode: this.modes.planMode });
+    this.emitModes();
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
     if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
     await this.session!.setPlanMode(enabled);
     this.modes.planMode = enabled;
-    this.emit({ type: 'modes', permissionMode: this.modes.permissionMode, planMode: enabled });
+    this.emitModes();
+  }
+
+  /**
+   * 切思考档位。
+   *
+   * 只接受能力里声明过的档位：不同模型的档位集合不一样，
+   * 不校验的话传个不存在的值进去，pi 那边会报一个很难懂的错误。
+   */
+  async setEffort(sessionId: string, effort: string): Promise<void> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    if (!this.modes.effortLevels.includes(effort)) {
+      throw new Error(`当前模型不支持「${effort}」档`);
+    }
+    await this.session!.setEffort(effort as never);
+    // 以引擎回读为准：失败时抛错，这里拿到的就是真生效后的值
+    this.modes.effort = this.session!.getEffort();
+    this.emitModes();
+  }
+
+  /** 模式变化统一从这里广播，避免三个调用点各拼一遍字段 */
+  private emitModes(): void {
+    this.emit({
+      type: 'modes',
+      permissionMode: this.modes.permissionMode,
+      planMode: this.modes.planMode,
+      effort: this.modes.effort,
+      effortLevels: this.modes.effortLevels,
+    });
   }
 
   /**
@@ -768,8 +792,7 @@ export class HostRuntime {
    * 以引擎为准：plan 模式可能被 agent 自己退出（plan_mode_changed 事件），
    * 只靠我们自己的变量会跟现实脱节。
    * 但 getPlanMode() 可能返回 null（未知），那时退回到我们记的值。
-   */
-  async readModes(sessionId: string): Promise<ModeState> {
+   */  async readModes(sessionId: string): Promise<ModeState> {
     if (!this.session || this.session.id !== sessionId) {
       return { ...this.modes };
     }
@@ -779,7 +802,47 @@ export class HostRuntime {
     } catch {
       // 拿不到就用记着的值
     }
+    this.refreshEffort();
     return { ...this.modes };
+  }
+
+  /**
+   * 从引擎能力里读当前模型的档位集合与当前值。
+   *
+   * 档位不写死：不同模型能给的不一样（有的一次给六档，有的一档没有）。
+   * 写死就会出现「UI 有这个选项，点了引擎报错」。
+   */
+  private refreshEffort(): void {
+    if (!this.session) return;
+    try {
+      // capabilities 不在公开类型上，但它是运行时就能拿到的真值
+      const caps = (
+        this.session as unknown as {
+          capabilities?: {
+            effort?: { supported?: boolean };
+            effortLevels?: Array<{ id?: string }>;
+          };
+        }
+      ).capabilities;
+      if (caps?.effort?.supported !== true) {
+        this.modes.effortLevels = [];
+        this.modes.effort = null;
+        return;
+      }
+      const levels = (caps.effortLevels ?? [])
+        .map((l) => l.id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+      // 能力声明可能会大于实际能切的：pi 在模型目录未声明 effort 时
+      // 只放行 low（当占位值），其余都会报错。宿主传了哪些就是真正可用的哪些。
+      const configured = new Set<string>(this.cfg.efforts as readonly string[]);
+      const usable = configured.size === 0 ? [] : levels.filter((id) => configured.has(id));
+      this.modes.effortLevels = usable;
+      this.modes.effort = usable.length > 0 ? this.session.getEffort() : null;
+    } catch {
+      // 拿不到就当不支持，UI 不画那个控件
+      this.modes.effortLevels = [];
+      this.modes.effort = null;
+    }
   }
 
   async contextUsage(sessionId: string): Promise<ContextUsage | null> {

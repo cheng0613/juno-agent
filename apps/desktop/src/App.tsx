@@ -99,7 +99,12 @@ export function App() {
   const [turnDiff, setTurnDiff] = useState<TurnDiffPayload | null>(null);
   /** 面板是否展开；关掉后面板不丢，顶栏还能再打开 */
   const [diffOpen, setDiffOpen] = useState(false);
-  const [modes, setModes] = useState<ModeState>({ permissionMode: 'ask', planMode: false });
+  const [modes, setModes] = useState<ModeState>({
+    permissionMode: 'ask',
+    planMode: false,
+    effort: null,
+    effortLevels: [],
+  });
   // 递增即表示「强制滚到底」：只有切会话/续跑这类主动跳转才用，
   // 流式输出仍然走「贴底才跟随」的保守策略
   const [scrollTick, setScrollTick] = useState(0);
@@ -239,7 +244,12 @@ export function App() {
         }
 
         case 'modes': {
-          setModes({ permissionMode: event.permissionMode, planMode: event.planMode });
+          setModes({
+            permissionMode: event.permissionMode,
+            planMode: event.planMode,
+            effort: event.effort,
+            effortLevels: event.effortLevels,
+          });
           return;
         }
 
@@ -363,6 +373,18 @@ export function App() {
       if (!activeId) return;
       try {
         await host.setPlanMode(activeId, enabled);
+      } catch (error) {
+        setNotice(`切换失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [activeId, host],
+  );
+
+  const changeEffort = useCallback(
+    async (effort: string) => {
+      if (!activeId) return;
+      try {
+        await host.setEffort(activeId, effort);
       } catch (error) {
         setNotice(`切换失败：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -537,6 +559,7 @@ export function App() {
             disabled={!activeId}
             onChange={(mode) => void changeMode(mode)}
             onPlanToggle={(enabled) => void togglePlanMode(enabled)}
+            onEffort={(effort) => void changeEffort(effort)}
           />
           {turnDiff && (
             <button

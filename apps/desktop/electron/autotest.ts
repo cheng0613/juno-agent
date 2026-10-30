@@ -1111,10 +1111,50 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     if (planOn.planMode !== true) throw new Error('计划模式没打开');
     if (planOff.planMode !== false) throw new Error('计划模式没关掉');
 
+    /* ---- 4. 思考档位 ---- */
+    const initial = await runtime.readModes(sessionId);
+    note(`初始档位: ${initial.effort} / 可选 ${JSON.stringify(initial.effortLevels)}`);
+    if (initial.effortLevels.length === 0) {
+      note('当前模型不支持思考档位，跳过');
+    } else {
+      await runtime.setEffort(sessionId, 'max');
+      await delay(600);
+      const afterMax = await runtime.readModes(sessionId);
+      note(`切到 max 后: ${afterMax.effort}`);
+      if (afterMax.effort !== 'max') throw new Error(`档位没切到 max，实际 ${afterMax.effort}`);
+
+      await runtime.setEffort(sessionId, 'minimal');
+      await delay(600);
+      const afterMin = await runtime.readModes(sessionId);
+      note(`切到 minimal 后: ${afterMin.effort}`);
+      if (afterMin.effort !== 'minimal') {
+        throw new Error(`档位没切到 minimal，实际 ${afterMin.effort}`);
+      }
+
+      // 不支持的档位应该被挡下来，而不是静默传进引擎
+      let rejected = false;
+      try {
+        await runtime.setEffort(sessionId, 'ultra-not-real');
+      } catch {
+        rejected = true;
+      }
+      note(`非法档位被拒绝: ${rejected}`);
+      if (!rejected) throw new Error('非法档位没被拒绝');
+
+      const uiBtn = await win.webContents.executeJavaScript(
+        `(() => {
+           const b = [...document.querySelectorAll('.mode-btn')].find(x => x.textContent.includes('思考'));
+           return b ? b.textContent.trim() : 'missing';
+         })()`,
+      );
+      note(`UI 思考按钮文案: ${uiBtn}`);
+      await shootTo(win, '23-effort');
+      note('截图 23-effort');
+    }
+
     await fs.writeFile(
       path.join(outDir, 'mode-result.json'),
-      JSON.stringify({ ok: true, approvals, planOn: planOn.planMode, planOff: planOff.planMode, log }, null, 2),
-      'utf8',
+      JSON.stringify({ ok: true, approvals, planOn: planOn.planMode, planOff: planOff.planMode, log }, null, 2),      'utf8',
     );
     note('完成');
   } catch (error) {
