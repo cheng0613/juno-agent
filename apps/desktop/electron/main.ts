@@ -12,6 +12,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
 import { readSettings, writeSettings, hasStoredKey, encryptionAvailable, settingsFilePath } from './settingsStore.js';
+import { loadWindowState, saveWindowState } from './windowState.js';
 import {
   IPC,
   type ApproveInput,
@@ -369,12 +370,17 @@ function registerIpc(): void {
 }
 
 async function createWindow(): Promise<void> {
+  // 恢复上次的尺寸与位置（已校验过是否还在屏幕上）
+  const saved = await loadWindowState();
   win = new BrowserWindow({
-    width: 1180,
-    height: 800,
+    width: saved.width,
+    height: saved.height,
+    ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
     minWidth: 720,
     minHeight: 520,
-    backgroundColor: '#f4f4ef',
+    // 与 tokens.css 的 --surface 一致：#f2f2ed。
+    // 写死的理由：这个值在页面加载前就要用，读不到 CSS 变量。
+    backgroundColor: '#f2f2ed',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(import.meta.dirname, 'preload.cjs'),
@@ -398,6 +404,13 @@ async function createWindow(): Promise<void> {
     await win.loadFile(path.join(import.meta.dirname, '../dist/index.html'));
   }
 
+  if (saved.maximized) win.maximize();
+
+  // 关窗前保存尺寸。
+  // 用 'close' 而不是 'closed'：'closed' 时窗口已经销毁，拿不到 bounds。
+  win.on('close', () => {
+    if (win) void saveWindowState(win);
+  });
   win.on('closed', () => {
     win = null;
   });
@@ -457,7 +470,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -498,6 +511,8 @@ app.whenReady().then(async () => {
                                         ? runErrorBoundaryTest(win, runtime)
                                       : mode === 'watchdog'
                                         ? runWatchdogTest(win, runtime)
+                                      : mode === 'window'
+                                        ? runWindowStateTest(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

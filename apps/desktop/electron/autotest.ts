@@ -7,7 +7,7 @@
  * 它复用与生产完全相同的代码路径：HostRuntime.send → 事件 → App 渲染。
  * 唯一被绕过的是「用鼠标点输入框」这一步（React 受控组件无法可靠地从外部设值）。
  */
-import { app, type BrowserWindow } from 'electron';
+import { app, screen, type BrowserWindow } from 'electron';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -2618,6 +2618,100 @@ export async function runWatchdogTest(win: BrowserWindow, runtime: HostRuntime):
     await fs
       .writeFile(
         path.join(outDir, 'watchdog-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 窗口尺寸记忆验收。
+ *
+ * 三个要点：
+ *   1. 改尺寸后关窗 → 文件里记下了新尺寸
+ *   2. 最大化时记的是「还原后」尺寸，不是屏幕大小
+ *   3. **上次位置不在任何屏幕上时丢弃位置**（拔了副屏的经典场景）
+ */
+export async function runWindowStateTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/window] ${s}`);
+  };
+
+  const stateFile = path.join(app.getPath('userData'), 'window-state.json');
+
+  try {
+    await delay(2200);
+    await runtime.ensureSession();
+
+    /* ---- 1. 改尺寸 → 保存 → 文件里是新尺寸 ---- */
+    const width = 1000;
+    const height = 700;
+    win.setSize(width, height);
+    await delay(600);
+    const bounds = win.getBounds();
+    note(`设置后实际尺寸: ${bounds.width}x${bounds.height}`);
+
+    // 直接触发一次保存（关窗会退出应用，测试里不真关）
+    const { saveWindowState, loadWindowState, ensureOnScreen } = await import('./windowState.js');
+    await saveWindowState(win);
+    await delay(300);
+
+    const raw = await fs.readFile(stateFile, 'utf8').catch(() => '');
+    note(`保存的文件: ${raw.replace(/\s+/g, ' ')}`);
+    const saved = JSON.parse(raw || '{}');
+    if (saved.width !== bounds.width || saved.height !== bounds.height) {
+      throw new Error(`保存的尺寸不对: ${JSON.stringify(saved)} vs ${bounds.width}x${bounds.height}`);
+    }
+
+    /* ---- 2. 最大化时记的是还原后尺寸 ---- */
+    win.maximize();
+    await delay(800);
+    const isMax = win.isMaximized();
+    await saveWindowState(win);
+    const afterMax = JSON.parse((await fs.readFile(stateFile, 'utf8')) || '{}');
+    note(`最大化: ${isMax} / 记录尺寸: ${afterMax.width}x${afterMax.height} / 屏幕: ${screen.getPrimaryDisplay().workArea.width}`);
+
+    if (isMax && afterMax.width >= screen.getPrimaryDisplay().workArea.width) {
+      throw new Error('最大化时把屏幕尺寸记了下来，取消最大化后窗口会变得巨大');
+    }
+    if (isMax && afterMax.maximized !== true) throw new Error('没有记录「最大化」状态');
+
+    /* ---- 3. 屏幕外位置应被丢弃 ---- */
+    const offscreen = ensureOnScreen({ width: 1000, height: 700, x: -99999, y: -99999 });
+    note(`屏幕外位置处理结果: ${JSON.stringify(offscreen)}`);
+    if (offscreen.x !== undefined) throw new Error('屏幕外的位置没有被丢弃');
+
+    const onscreen = ensureOnScreen({ width: 1000, height: 700, x: 100, y: 100 });
+    if (onscreen.x !== 100) throw new Error('正常位置被误判成屏幕外');
+
+    /* ---- 4. 读回能对上 ---- */
+    const loaded = await loadWindowState();
+    note(`读回: ${JSON.stringify(loaded)}`);
+    if (!loaded.width || !loaded.height) throw new Error('读回的尺寸无效');
+
+    await shootTo(win, '43-window-state');
+    note('截图 43-window-state');
+
+    await fs.writeFile(
+      path.join(outDir, 'window-result.json'),
+      JSON.stringify({ ok: true, saved: afterMax, offscreen, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-window-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'window-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )
