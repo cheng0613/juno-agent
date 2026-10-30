@@ -83,6 +83,10 @@ APP_AUTOTEST=diff node scripts/launch.mjs             # 让模型创建文件，
 # ---- 验权限档位与计划模式 ----
 APP_AUTOTEST=mode node scripts/launch.mjs             # 全放行需二次确认；auto 档不再弹审批
 
+# ---- 验模型热切换（需先配 APP_MODELS，至少两个）----
+APP_MODELS='[{"id":"m1","label":"模型一"},{"id":"m2","label":"模型二"}]' \
+  APP_AUTOTEST=model node scripts/launch.mjs           # 切后 UI 跟随、未知模型被拒
+
 # ---- CLI（验证数据层，不需要 key）----
 cd apps/spike
 node build.mjs
@@ -101,9 +105,10 @@ node dist/selftest.js        # 6/6
 | `APP_CONTEXT_WINDOW` | `200000` | 上下文窗口，用于 models.json 与压缩判定 |
 | `APP_COMPACT_PCT` | 由 pi 决定（约 90） | 自动压缩在窗口的百分之几处触发；值越小压得越早 |
 | `APP_EFFORTS` | 空 = 不支持思考档位 | 逗号分隔的档位，如 `minimal,low,medium,high,xhigh,max`；**配置后才在 UI 显示** |
+| `APP_MODELS` | 空 = 只有一个模型 | JSON 数组，配两个以上才出现模型切换下拉。例：`[{"id":"m1","label":"模型一"},{"id":"m2","label":"模型二"}]` |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -157,6 +162,7 @@ node dist/selftest.js        # 6/6
 - 权限档位：全放行需二次确认；切到 auto 后审批次数 0
 - 计划模式：开关往返正常
 - 思考档位：未配置 `APP_EFFORTS` 时不显示；配置后 6 档可切、非法值被拒
+- 模型热切换：多模型时出现下拉、切后 UI 跟随、未知模型被拒且不改动当前值
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

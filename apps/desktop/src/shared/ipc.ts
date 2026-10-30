@@ -37,6 +37,10 @@ export const IPC = {
   readModes: 'host:read-modes',
   /** 渲染 → 主：切思考档位 */
   setEffort: 'host:set-effort',
+  /** 渲染 → 主：列出可选模型 */
+  listModels: 'host:list-models',
+  /** 渲染 → 主：热切换模型 */
+  switchModel: 'host:switch-model',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -149,6 +153,7 @@ export type HostEvent =
   | { type: 'steer'; turnId: string; text: string }
   | ({ type: 'turn_diff'; turnId: string } & TurnDiffPayload)
   | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean; effort: string | null; effortLevels: string[] }
+  | { type: 'model'; modelId: string }
   | { type: 'error'; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
@@ -229,6 +234,9 @@ export interface HostBridge {
   setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void>;
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
   setEffort(sessionId: string, effort: string): Promise<void>;
+  listModels(): Promise<{ models: Array<{ id: string; label: string }>; current: string }>;
+  /** 切换模型；rebuilt=true 表示上下文可能重建过 */
+  switchModel(sessionId: string, modelId: string): Promise<{ rebuilt: boolean }>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

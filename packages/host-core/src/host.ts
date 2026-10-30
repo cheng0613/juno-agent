@@ -146,6 +146,18 @@ export interface PiHostOptions {
   compactionPct?: number;
   /** 支持的努力档位；空数组 = 该模型不支持 effort 切换 */
   efforts?: readonly Effort[];
+  /**
+   * 额外可切换的模型。不传 = 只有 opts.model 一个。
+   *
+   * 为什么需要：pi 的 availableModels 是切换的唯一来源。
+   * 宿主不挂的话，UI 上根本没有可切的第二个模型。
+   */
+  extraModels?: readonly {
+    id: string;
+    label?: string;
+    contextWindow?: number;
+    efforts?: readonly Effort[];
+  }[];
   /** 默认 effort；null = 不支持 */
   defaultEffort?: Effort | null;
   /** pi 配置目录（内含 models.json / sessions/） */
@@ -192,6 +204,18 @@ export function createPiAgent(opts: PiHostOptions): PiAgent {
           // efforts 为空时标明「目录未声明」，避免准入校验把「没声明」当成「明确不支持」
           effortsUnknown: efforts.length === 0,
         },
+        // 额外模型：只负责让 pi 认得它们，切不切由用户决定。
+        // 重复 id 直接跳过 —— 同一个模型挂两次会让目录里出现重复项。
+        ...(opts.extraModels ?? [])
+          .filter((m) => m.id && m.id !== opts.model)
+          .map((m) => ({
+            id: m.id,
+            displayName: m.label ?? m.id,
+            contextWindow: m.contextWindow ?? opts.contextWindow ?? 200_000,
+            efforts: m.efforts ?? efforts,
+            defaultEffort,
+            effortsUnknown: (m.efforts ?? efforts).length === 0,
+          })),
       ],
     },
     resolveModelContextLimit: () => opts.contextWindow ?? 200_000,

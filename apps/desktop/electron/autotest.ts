@@ -1172,3 +1172,122 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     app.quit();
   }
 }
+
+/**
+ * 模型热切换验收。
+ *
+ * 用 APP_MODELS 配两个 id（可以指向同一个端点）—— 这一步验的是「切换链路」，
+ * 不是「两个模型答得不一样」。真实多供应商需要用户自己配 key。
+ *
+ * 关键点：
+ *   1. 多模型时侧栏出现下拉，单模型时不出现（不摆假下拉）
+ *   2. 切换后 model 事件广播、UI 跟随
+ *   3. 切换后还能正常对话（证明会话没被切坏）
+ */
+export async function runModelTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/model] ${s}`);
+  };
+
+  let turnsDone = 0;
+  const modelEvents: string[] = [];
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+    if (e.type === 'model') modelEvents.push(e.modelId);
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  try {
+    await delay(2200);
+    const boot = await win.webContents.executeJavaScript('window.host.createSession()');
+    const sessionId: string = boot.activeSessionId;
+
+    const listed = runtime.listModels();
+    note(`可选模型: ${JSON.stringify(listed.models)} / 当前 ${listed.current}`);
+    if (listed.models.length < 2) {
+      throw new Error(`本测试需要至少两个模型，实际 ${listed.models.length} 个（检查 APP_MODELS）`);
+    }
+
+    const selectCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.model-select').length`,
+    );
+    note(`侧栏下拉数量: ${selectCount}`);
+    if (selectCount !== 1) throw new Error('多模型时没有出现模型下拉');
+
+    await shootTo(win, '24-model-select');
+    note('截图 24-model-select');
+
+    const target = listed.models.find((m) => m.id !== listed.current)!;
+    note(`切到: ${target.id}`);
+    const result = await runtime.switchModel(sessionId, target.id);
+    note(`切换结果: ${JSON.stringify(result)}`);
+    await delay(800);
+
+    const after = runtime.listModels();
+    note(`切换后当前模型: ${after.current}`);
+    if (after.current !== target.id) throw new Error(`当前模型没变，仍是 ${after.current}`);
+    if (modelEvents.length === 0) throw new Error('没有广播 model 事件');
+
+    const uiValue = await win.webContents.executeJavaScript(
+      `document.querySelector('.model-select') ? document.querySelector('.model-select').value : 'missing'`,
+    );
+    note(`UI 下拉当前值: ${uiValue}`);
+    if (uiValue !== target.id) throw new Error(`UI 没跟随，显示 ${uiValue}`);
+
+    // 切换后还能正常对话
+    turnsDone = 0;
+    await win.webContents.executeJavaScript(
+      `window.host.send({ sessionId: ${JSON.stringify(sessionId)}, text: '用一句话回答：1+1 等于几' })`,
+    );
+    await waitFor(() => turnsDone >= 1, 120_000, '切换模型后跑一轮');
+    note('切换后对话正常');
+
+    // 未知模型必须被拒，而不是静默接受
+    let rejectedUnknown = false;
+    try {
+      await runtime.switchModel(sessionId, 'model-that-does-not-exist');
+    } catch {
+      rejectedUnknown = true;
+    }
+    note(`未知模型被拒绝: ${rejectedUnknown}`);
+    if (!rejectedUnknown) throw new Error('未知模型没被拒绝');
+    const stillCurrent = runtime.listModels().current;
+    note(`拒绝后的当前模型: ${stillCurrent}`);
+    if (stillCurrent !== target.id) throw new Error('拒绝后当前模型被改动了');
+
+    await shootTo(win, '25-model-switched');
+    note('截图 25-model-switched');
+
+    await fs.writeFile(
+      path.join(outDir, 'model-result.json'),
+      JSON.stringify({ ok: true, models: listed.models, switchedTo: target.id, modelEvents, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-model-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'model-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

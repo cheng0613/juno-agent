@@ -152,6 +152,20 @@ export function createMockHost(): HostBridge {
         effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
       };
     },
+    async listModels() {
+      return {
+        models: [
+          { id: 'deepseek-v4.1-flash-1017', label: 'DeepSeek' },
+          { id: 'gpt-4o', label: 'GPT-4o' },
+        ],
+        current: 'deepseek-v4.1-flash-1017',
+      };
+    },
+    async switchModel(_sessionId, modelId) {
+      const listener = [...listeners].at(-1);
+      listener?.({ type: 'model', modelId });
+      return { rebuilt: false };
+    },
     onEvent(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

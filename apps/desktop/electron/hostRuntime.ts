@@ -47,11 +47,13 @@ import {
   createBaseline,
   type DiffBaseline,
 } from './turnDiff.js';
+import { parseModelCatalog } from './modelCatalog.js';
 
 export interface HostConfig {
   upstreamRoot: string;
   /** 直接指定 pi 可执行文件；打包后指向 resources/pi-bin/pi.exe */
   binaryPath?: string;
+  /** 当前模型；会因热切换而改，所以不是只读 */
   model: string;
   endpoint: string;
   api: PiNativeApi;
@@ -163,7 +165,16 @@ export class HostRuntime {
    */
   private modes: ModeState = { permissionMode: 'ask', planMode: false, effort: null, effortLevels: [] };
 
-  constructor(private readonly cfg: HostConfig) {}
+  /** 可选模型清单。启动时解析一次，运行期不变 */
+  private readonly catalog: ReturnType<typeof parseModelCatalog>;
+
+  constructor(private readonly cfg: HostConfig) {
+    this.catalog = parseModelCatalog(process.env.APP_MODELS, {
+      id: cfg.model,
+      contextWindow: cfg.contextWindow,
+      efforts: [...cfg.efforts],
+    });
+  }
 
   onEvent(listener: (event: HostEvent) => void): () => void {
     this.listeners.add(listener);
@@ -206,6 +217,16 @@ export class HostRuntime {
       endpoint: this.cfg.endpoint,
       contextWindow: this.cfg.contextWindow,
       compactionPct: this.cfg.compactionPct,
+      extraModels: this.catalog.multi
+        ? this.catalog.entries
+            .filter((m) => m.id !== this.cfg.model)
+            .map((m) => ({
+              id: m.id,
+              label: m.label,
+              contextWindow: m.contextWindow,
+              efforts: (m.efforts as Effort[] | undefined) ?? undefined,
+            }))
+        : undefined,
       efforts: this.cfg.efforts,
       defaultEffort:
         this.cfg.efforts.length > 0
@@ -749,6 +770,57 @@ export class HostRuntime {
     await this.session!.setPermissionMode(mode);
     this.modes.permissionMode = mode;
     this.emitModes();
+  }
+
+  /** 可选模型清单 + 当前模型 */
+  listModels(): { models: Array<{ id: string; label: string }>; current: string } {
+    return {
+      models: this.catalog.entries.map((m) => ({ id: m.id, label: m.label })),
+      current: this.cfg.model,
+    };
+  }
+
+  /**
+   * 切换模型。
+   *
+   * 先问引擎「会怎么切」：
+   *   hot / refresh → 直接切，历史保留
+   *   rebuild       → 需要重建会话，**可能丢掉当前上下文**，必须让用户知道
+   *   unavailable   → 这个模型当下切不了，直接报错比默默无视强
+   *
+   * preview 本身也可能抛（引擎未就绪），那时仍然尝试切 ——
+   * 因为 preview 只是预检，不是前置条件。
+   */
+  async switchModel(sessionId: string, modelId: string): Promise<{ rebuilt: boolean }> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session = this.session!;
+
+    if (!this.catalog.entries.some((m) => m.id === modelId)) {
+      throw new Error(`未知模型：${modelId}`);
+    }
+
+    let action: string | null = null;
+    let reason: string | undefined;
+    try {
+      const preview = await session.previewModelSwitch(modelId);
+      action = preview?.action ?? null;
+      reason = preview?.reason;
+    } catch {
+      // 预检失败不影响切换本身，忽略
+    }
+
+    if (action === 'unavailable') {
+      throw new Error(reason ?? '当前环境切换不了这个模型');
+    }
+
+    await session.setModel(modelId);
+    this.cfg.model = modelId;
+    // 换模型后档位集合与上下文都不一样，必须重算
+    this.refreshEffort();
+    this.emitModes();
+    this.emit({ type: 'model', modelId });
+
+    return { rebuilt: action === 'rebuild' };
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {

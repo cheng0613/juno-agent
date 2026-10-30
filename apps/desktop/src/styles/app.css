@@ -1044,3 +1044,24 @@ body {
   left: 0;
   right: auto;
 }
+
+/* 模型选择器：侧栏底部的轻量下拉 */
+.model-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 140px;
+  font: inherit;
+  font-size: var(--text-11);
+  line-height: var(--text-11-lh);
+  padding: 2px var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.model-select:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+.model-select:disabled { opacity: 0.5; cursor: default; }

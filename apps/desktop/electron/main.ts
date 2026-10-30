@@ -179,6 +179,12 @@ function registerIpc(): void {
     return runtime!.setEffort(sessionId, effort);
   });
 
+  ipcMain.handle(IPC.listModels, async () => runtime!.listModels());
+
+  ipcMain.handle(IPC.switchModel, async (_e, sessionId: string, modelId: string) => {
+    return runtime!.switchModel(sessionId, modelId);
+  });
+
   // 只在自动化验收时开的后门：伪造一条穿透引擎的压缩边界。
   // pi 的手动压缩有内置下限，小会话永远 noop，用真实 API 堆到那个量级不经济；
   // 而我们要验的「事件→落库→渲染」那半条链路，能用一个真实事件完整跑一遍。
@@ -259,9 +265,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=steer      → 验插话与上下文占用
   //   APP_AUTOTEST=diff       → 验本轮改动面板
   //   APP_AUTOTEST=mode       → 验权限档位与计划模式
+  //   APP_AUTOTEST=model      → 验模型热切换（需 APP_MODELS 配两个）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -278,7 +285,9 @@ app.whenReady().then(async () => {
                   ? runDiffTest(win, runtime)
                   : mode === 'mode'
                     ? runModeTest(win, runtime)
-                    : runAutotest(win, runtime)
+                    : mode === 'model'
+                      ? runModelTest(win, runtime)
+                      : runAutotest(win, runtime)
     );
   }
 

@@ -88,6 +88,8 @@ export function App() {
   }, [notice]);
   const [interrupted, setInterrupted] = useState<InterruptedTurn[]>([]);
   const [model, setModel] = useState('');
+  /** 可选模型清单；只有一个时不显示选择器 */
+  const [models, setModels] = useState<Array<{ id: string; label: string }>>([]);
   const [dark, setDark] = useState(false);
   const [input, setInput] = useState('');
   // 正在跑的时候用户又输入的句子，排在这里，等本轮结束自动发出
@@ -138,6 +140,7 @@ export function App() {
       setActiveId(boot.activeSessionId);
       setMessages(boot.messages);
       setModel(boot.model);
+      void host.listModels().then((r) => setModels(r.models));
       setInterrupted(boot.interruptedTurns);
       if (boot.activeSessionId) {
         void host.contextUsage(boot.activeSessionId).then(setUsage);
@@ -240,6 +243,11 @@ export function App() {
 
         case 'steer': {
           // 插话已经在发送时乐观插入了，这里只防止重复（重载后会换成库里的那条）
+          return;
+        }
+
+        case 'model': {
+          setModel(event.modelId);
           return;
         }
 
@@ -392,6 +400,20 @@ export function App() {
     [activeId, host],
   );
 
+  const switchModelTo = useCallback(
+    async (modelId: string) => {
+      if (!activeId || modelId === model) return;
+      try {
+        const result = await host.switchModel(activeId, modelId);
+        // rebuild 意味着上下文可能被重建过，必须告知而不是假装无事发生
+        if (result.rebuilt) setNotice('模型已切换；因为要重建会话，较早的上下文可能已丢失');
+      } catch (error) {
+        setNotice(`切换模型失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [activeId, model, host],
+  );
+
   /* 手动压缩上下文 */
   const compactNow = useCallback(async () => {
     if (!activeId || running || compacting) return;
@@ -506,8 +528,24 @@ export function App() {
           <button className="ghost" onClick={toggleTheme}>
             {dark ? '浅色' : '深色'}
           </button>
-          <span className="model">{model}</span>
-        </div>
+          {/* 只有一个模型就不摆假下拉：选择器本身也是认知负担 */}
+          {models.length > 1 ? (
+            <select
+              className="model-select"
+              value={model}
+              disabled={running}
+              title="切换模型（当前会话）"
+              onChange={(e) => void switchModelTo(e.target.value)}
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="model">{model}</span>
+          )}        </div>
       </aside>
 
       {/* ---------------- 主区 ---------------- */}
