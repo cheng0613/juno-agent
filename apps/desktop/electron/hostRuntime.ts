@@ -38,6 +38,8 @@ import type {
   ContextUsage,
   HostEvent,
   InterruptedTurn,
+  ModeState,
+  PermissionModeChoice,
 } from '../src/shared/ipc.js';
 
 import {
@@ -152,6 +154,14 @@ export class HostRuntime {
     baseline: DiffBaseline;
     paths: string[];
   } | null = null;
+
+  /**
+   * 当前权限/计划模式。
+   *
+   * 为什么要在宿主侧存一份：引擎的 getPlanMode() 可能返回 null，
+   * 而 UI 总得知道现在是什么状态。这里存的是「最后一次确认过的值」。
+   */
+  private modes: ModeState = { permissionMode: 'ask', planMode: false };
 
   constructor(private readonly cfg: HostConfig) {}
 
@@ -584,6 +594,20 @@ export class HostRuntime {
         });
         return;
       }
+      case 'plan_mode_changed': {
+        // agent 自己也会切计划模式（比如计划批准后自动退出），
+        // 不同步的话 UI 上那个开关会与实际状态相反
+        const d = (event.data ?? {}) as { enabled?: boolean };
+        if (typeof d.enabled === 'boolean') {
+          this.modes.planMode = d.enabled;
+          this.emit({
+            type: 'modes',
+            permissionMode: this.modes.permissionMode,
+            planMode: d.enabled,
+          });
+        }
+        return;
+      }
       default:
         return;
     }
@@ -718,6 +742,46 @@ export class HostRuntime {
    * 失败时返回 null 而不是抛错：占用条是辅助信息，拿不到就不画，
    * 不该因为一个进度条把整个界面搞出错误提示。
    */
+  /**
+   * 切权限档位。
+   *
+   * 轮进行中允许切 —— 引擎是即时生效的（setPermissionModeMidSession）。
+   * 用户跑到一半发现「这个应该全放行」很正常，没必要逼他先停下来。
+   */
+  async setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    await this.session!.setPermissionMode(mode);
+    this.modes.permissionMode = mode;
+    this.emit({ type: 'modes', permissionMode: mode, planMode: this.modes.planMode });
+  }
+
+  async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    await this.session!.setPlanMode(enabled);
+    this.modes.planMode = enabled;
+    this.emit({ type: 'modes', permissionMode: this.modes.permissionMode, planMode: enabled });
+  }
+
+  /**
+   * 读当前模式。
+   *
+   * 以引擎为准：plan 模式可能被 agent 自己退出（plan_mode_changed 事件），
+   * 只靠我们自己的变量会跟现实脱节。
+   * 但 getPlanMode() 可能返回 null（未知），那时退回到我们记的值。
+   */
+  async readModes(sessionId: string): Promise<ModeState> {
+    if (!this.session || this.session.id !== sessionId) {
+      return { ...this.modes };
+    }
+    try {
+      const plan = this.session.getPlanMode();
+      if (typeof plan === 'boolean') this.modes.planMode = plan;
+    } catch {
+      // 拿不到就用记着的值
+    }
+    return { ...this.modes };
+  }
+
   async contextUsage(sessionId: string): Promise<ContextUsage | null> {
     if (!this.session || this.session.id !== sessionId) return null;
     try {

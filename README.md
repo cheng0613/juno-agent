@@ -80,6 +80,9 @@ APP_AUTOTEST=steer node scripts/launch.mjs            # 让模型数到 30，中
 # ---- 验本轮改动面板 ----
 APP_AUTOTEST=diff node scripts/launch.mjs             # 让模型创建文件，右侧面板应列出并展示 diff
 
+# ---- 验权限档位与计划模式 ----
+APP_AUTOTEST=mode node scripts/launch.mjs             # 全放行需二次确认；auto 档不再弹审批
+
 # ---- CLI（验证数据层，不需要 key）----
 cd apps/spike
 node build.mjs
@@ -99,7 +102,7 @@ node dist/selftest.js        # 6/6
 | `APP_COMPACT_PCT` | 由 pi 决定（约 90） | 自动压缩在窗口的百分之几处触发；值越小压得越早 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -150,6 +153,8 @@ node dist/selftest.js        # 6/6
 - 插话（`steer`）：数到一半插话改成只数到 5，模型真的停在 5
 - 上下文占用条：引擎给出的百分比实时显示，点击即压缩
 - 本轮改动面板：真实创建文件后列出 +1，展开能看到 `+hello`
+- 权限档位：全放行需二次确认；切到 auto 后审批次数 0
+- 计划模式：开关往返正常
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

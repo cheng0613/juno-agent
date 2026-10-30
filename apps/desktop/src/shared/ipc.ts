@@ -29,6 +29,12 @@ export const IPC = {
   steer: 'host:steer',
   /** 渲染 → 主：当前上下文占用 */
   contextUsage: 'host:context-usage',
+  /** 渲染 → 主：切权限档位 */
+  setPermissionMode: 'host:set-permission-mode',
+  /** 渲染 → 主：开关计划模式 */
+  setPlanMode: 'host:set-plan-mode',
+  /** 渲染 → 主：拿当前权限/计划状态 */
+  readModes: 'host:read-modes',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -140,6 +146,7 @@ export type HostEvent =
   | { type: 'compact'; turnId: string | null; trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null }
   | { type: 'steer'; turnId: string; text: string }
   | ({ type: 'turn_diff'; turnId: string } & TurnDiffPayload)
+  | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean }
   | { type: 'error'; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
@@ -147,6 +154,28 @@ export interface CompactResult {
   noop: boolean;
   preTokens?: number;
   postTokens?: number;
+}
+
+/**
+ * 权限档位。只暴露 pi 真实支持的三档 ——
+ * 引擎的 PermissionMode 还包含 default/acceptEdits/plan，但 pi 不认，
+ * 摆到 UI 上只会让用户点了没反应。
+ */
+export type PermissionModeChoice = 'ask' | 'auto' | 'bypassPermissions';
+
+/** 档位对用户的含义要直说，不能只给个英文 id */
+export interface PermissionModeInfo {
+  id: PermissionModeChoice;
+  label: string;
+  hint: string;
+  /** true = 危险档，UI 要二次确认 */
+  dangerous?: boolean;
+}
+
+/** 当前模式状态 */
+export interface ModeState {
+  permissionMode: PermissionModeChoice;
+  planMode: boolean;
 }
 
 /**
@@ -191,5 +220,8 @@ export interface HostBridge {
   steer(sessionId: string, text: string): Promise<void>;
   /** 当前上下文占用；拿不到时返回 null（不报错，UI 自己隐藏） */
   contextUsage(sessionId: string): Promise<ContextUsage | null>;
+  setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void>;
+  setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
+  readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

@@ -114,6 +114,17 @@ export function createMockHost(): HostBridge {
       const listener = [...listeners].at(-1);
       listener?.({ type: 'steer', turnId: 'mock', text });
     },
+    async setPermissionMode(_sessionId, mode) {
+      const listener = [...listeners].at(-1);
+      listener?.({ type: 'modes', permissionMode: mode, planMode: false });
+    },
+    async setPlanMode(_sessionId, enabled) {
+      const listener = [...listeners].at(-1);
+      listener?.({ type: 'modes', permissionMode: 'ask', planMode: enabled });
+    },
+    async readModes() {
+      return { permissionMode: 'ask' as const, planMode: false };
+    },
     onEvent(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

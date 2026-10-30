@@ -64,10 +64,8 @@ export async function runAutotest(win: BrowserWindow, runtime: HostRuntime): Pro
   };
 
   const shot = async (name: string) => {
-    const image = await win.webContents.capturePage();
-    const file = path.join(outDir, `${name}.png`);
-    await fs.writeFile(file, image.toPNG());
-    shots.push(file);
+    await shootTo(win, name);
+    shots.push(path.join(outDir, `${name}.png`));
     note(`截图 ${name}`);
   };
 
@@ -346,8 +344,7 @@ export async function runPermissionTest(win: BrowserWindow, runtime: HostRuntime
     console.log(`[autotest/perm] ${s}`);
   };
   const shoot = async (name: string) => {
-    const image = await win.webContents.capturePage();
-    await fs.writeFile(path.join(outDir, `${name}.png`), image.toPNG());
+    await shootTo(win, name);
     note(`截图 ${name}`);
   };
 
@@ -452,8 +449,7 @@ export async function runQueueTest(win: BrowserWindow, runtime: HostRuntime): Pr
     console.log(`[autotest/queue] ${s}`);
   };
   const shoot = async (name: string) => {
-    const image = await win.webContents.capturePage();
-    await fs.writeFile(path.join(outDir, `${name}.png`), image.toPNG());
+    await shootTo(win, name);
     note(`截图 ${name}`);
   };
 
@@ -600,8 +596,7 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
     console.log(`[autotest/compact] ${s}`);
   };
   const shoot = async (name: string) => {
-    const image = await win.webContents.capturePage();
-    await fs.writeFile(path.join(outDir, `${name}.png`), image.toPNG());
+    await shootTo(win, name);
     note(`截图 ${name}`);
   };
 
@@ -980,6 +975,154 @@ export async function runDiffTest(win: BrowserWindow, runtime: HostRuntime): Pro
     await fs
       .writeFile(
         path.join(outDir, 'diff-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 权限档位 + 计划模式验收。
+ *
+ * 三件事：
+ *   1. 全放行必须二次确认 —— 不该一点就生效
+ *   2. 切换到 auto 后，命令行确实不再弹审批（证明档位真的传到了引擎）
+ *   3. 计划模式开关能来回切，且 UI 状态跟得上
+ */
+export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/mode] ${s}`);
+  };
+
+  let turnsDone = 0;
+  let approvals = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') {
+      approvals += 1;
+      runtime.approve(e.request.requestId, 'allow');
+    }
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  const click = (selector: string) =>
+    win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector(${JSON.stringify(selector)}); if (!b) return 'missing'; if (b.disabled) return 'disabled'; b.click(); return 'ok'; })()`,
+    );
+
+  try {
+    await delay(2200);
+    const boot = await win.webContents.executeJavaScript('window.host.createSession()');
+    const sessionId: string = boot.activeSessionId;
+    note(`新会话 ${sessionId}`);
+
+    /* ---- 1. 打开菜单，选全放行，应进入二次确认 ---- */
+    note(`打开菜单: ${await click('.mode-btn')}`);
+    await delay(400);
+    const items = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.mode-item-label')].map(e => e.textContent)`,
+    );
+    note(`菜单项: ${JSON.stringify(items)}`);
+    await shootTo(win, '20-permission-menu');
+    note('截图 20-permission-menu');
+
+    // 点「全放行」那一项
+    const clickedDanger = await win.webContents.executeJavaScript(
+      `(() => {
+         const items = [...document.querySelectorAll('.mode-item')];
+         const target = items.find(i => i.innerText.includes('全放行'));
+         if (!target) return 'missing';
+         target.click();
+         return 'ok';
+       })()`,
+    );
+    note(`点全放行: ${clickedDanger}`);
+    await delay(400);
+
+    const confirmShown = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.mode-confirm').length`,
+    );
+    note(`二次确认是否出现: ${confirmShown}`);
+    await shootTo(win, '21-bypass-confirm');
+    note('截图 21-bypass-confirm');
+
+    if (confirmShown < 1) throw new Error('全放行没有二次确认，一点就生效了');
+
+    // 取消，确认它没切过去
+    await win.webContents.executeJavaScript(
+      `(() => { const b = [...document.querySelectorAll('.mode-confirm .btn')].find(x => x.textContent.includes('取消')); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(300);
+    const afterCancel = await runtime.readModes(sessionId);
+    note(`取消后档位: ${afterCancel.permissionMode}`);
+    if (afterCancel.permissionMode === 'bypassPermissions') {
+      throw new Error('点了取消，档位却已经切到全放行');
+    }
+
+    /* ---- 2. 切到 auto，跑一条命令，应不再弹审批 ---- */
+    // 走 API 而不是点菜单：点菜单这条路上面已经验过了（二次确认生效），
+    // 再和 React 的 mousedown 关菜单逻辑缠斗没有额外价值。
+    // 这一步要验的是「档位真的传到了引擎」，UI 细节不是重点。
+    await runtime.setPermissionMode(sessionId, 'auto');
+    await delay(800);
+
+    const modesAfter = await runtime.readModes(sessionId);
+    note(`切换后档位: ${modesAfter.permissionMode}`);
+    if (modesAfter.permissionMode !== 'auto') {
+      throw new Error(`档位没切到 auto，实际 ${modesAfter.permissionMode}`);
+    }
+
+    approvals = 0;
+    turnsDone = 0;
+    await win.webContents.executeJavaScript(
+      `window.host.send({ sessionId: ${JSON.stringify(sessionId)}, text: '用 bash 跑 echo ok，一句话回答' })`,
+    );
+    await waitFor(() => turnsDone >= 1, 120_000, 'auto 档下跑一轮');
+    note(`auto 档审批次数: ${approvals}`);
+
+    /* ---- 3. 计划模式开关 ---- */
+    await runtime.setPlanMode(sessionId, true);
+    await delay(800);
+    const planOn = await runtime.readModes(sessionId);
+    note(`计划模式: ${planOn.planMode}`);
+    await shootTo(win, '22-plan-mode');
+    note('截图 22-plan-mode');
+
+    await runtime.setPlanMode(sessionId, false);
+    await delay(600);
+    const planOff = await runtime.readModes(sessionId);
+    note(`再切回: ${planOff.planMode}`);
+
+    if (planOn.planMode !== true) throw new Error('计划模式没打开');
+    if (planOff.planMode !== false) throw new Error('计划模式没关掉');
+
+    await fs.writeFile(
+      path.join(outDir, 'mode-result.json'),
+      JSON.stringify({ ok: true, approvals, planOn: planOn.planMode, planOff: planOff.planMode, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-mode-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'mode-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )

@@ -941,3 +941,98 @@ body {
   padding-right: min(460px, 60%);
   transition: padding-right var(--motion-base, 200ms) var(--ease-out, ease-out);
 }
+
+/* 权限档位 / 计划模式控制条 */
+.mode-controls {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+.mode-btn {
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.mode-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.mode-btn:disabled { opacity: 0.45; cursor: default; }
+.mode-btn.on {
+  background: var(--brand-soft, var(--surface-chip));
+  color: var(--brand);
+}
+/* 全放行是个持续的危险状态，必须一直看得见 */
+.mode-btn.danger {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.mode-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 40;
+  width: 320px;
+  padding: var(--space-1);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 14%));
+}
+.mode-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.mode-item:hover { background: var(--surface-hover); }
+.mode-item.active { background: var(--surface-chip); }
+.mode-item.dangerous .mode-item-label { color: var(--danger); }
+.mode-item-label {
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  color: var(--text-primary);
+}
+.mode-item-hint {
+  font-size: var(--text-11);
+  line-height: var(--text-11-lh);
+  color: var(--text-tertiary);
+}
+
+.mode-confirm { padding: var(--space-3); }
+.mode-confirm-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  color: var(--danger);
+  font-weight: 500;
+}
+.mode-confirm-body {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-12);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+.mode-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}

@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
+import { ModeControls } from './ModeControls';
 import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
   ContextUsage,
   HostBridge,
   InterruptedTurn,
+  ModeState,
+  PermissionModeChoice,
   SessionSummary,
   TurnDiffPayload,
   UiMessage,
@@ -96,6 +99,7 @@ export function App() {
   const [turnDiff, setTurnDiff] = useState<TurnDiffPayload | null>(null);
   /** 面板是否展开；关掉后面板不丢，顶栏还能再打开 */
   const [diffOpen, setDiffOpen] = useState(false);
+  const [modes, setModes] = useState<ModeState>({ permissionMode: 'ask', planMode: false });
   // 递增即表示「强制滚到底」：只有切会话/续跑这类主动跳转才用，
   // 流式输出仍然走「贴底才跟随」的保守策略
   const [scrollTick, setScrollTick] = useState(0);
@@ -132,6 +136,7 @@ export function App() {
       setInterrupted(boot.interruptedTurns);
       if (boot.activeSessionId) {
         void host.contextUsage(boot.activeSessionId).then(setUsage);
+        void host.readModes(boot.activeSessionId).then(setModes);
       }
     })();
   }, [host]);
@@ -230,6 +235,11 @@ export function App() {
 
         case 'steer': {
           // 插话已经在发送时乐观插入了，这里只防止重复（重载后会换成库里的那条）
+          return;
+        }
+
+        case 'modes': {
+          setModes({ permissionMode: event.permissionMode, planMode: event.planMode });
           return;
         }
 
@@ -335,6 +345,31 @@ export function App() {
     setQueued((prev) => [...prev, text]);
   }, [input]);
 
+  /* 切档位 / 开关计划模式 */
+  const changeMode = useCallback(
+    async (mode: PermissionModeChoice) => {
+      if (!activeId) return;
+      try {
+        await host.setPermissionMode(activeId, mode);
+      } catch (error) {
+        setNotice(`切换失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [activeId, host],
+  );
+
+  const togglePlanMode = useCallback(
+    async (enabled: boolean) => {
+      if (!activeId) return;
+      try {
+        await host.setPlanMode(activeId, enabled);
+      } catch (error) {
+        setNotice(`切换失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [activeId, host],
+  );
+
   /* 手动压缩上下文 */
   const compactNow = useCallback(async () => {
     if (!activeId || running || compacting) return;
@@ -381,6 +416,7 @@ export function App() {
     setTurnDiff(null);
     setDiffOpen(false);
     void host.contextUsage(id).then(setUsage);
+    void host.readModes(id).then(setModes);
   };
 
   const newSession = async () => {
@@ -496,6 +532,12 @@ export function App() {
             {sessions.find((s) => s.id === activeId)?.title ?? '会话'}
           </span>
           {usage && <UsageMeter usage={usage} onCompact={() => void compactNow()} compacting={compacting} disabled={running} />}
+          <ModeControls
+            modes={modes}
+            disabled={!activeId}
+            onChange={(mode) => void changeMode(mode)}
+            onPlanToggle={(enabled) => void togglePlanMode(enabled)}
+          />
           {turnDiff && (
             <button
               className="ghost topbar-action"
