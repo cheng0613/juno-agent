@@ -33,6 +33,8 @@
 ### 外壳
 - [Phase 3](./PHASE3-REPORT.md) — Electron + IPC + 对话 UI
 - [Phase 4](./PHASE4-REPORT.md) — NSIS 打包、asar 瘦身
+- [Phase 18](./PHASE18-REPORT.md) — 操作台布局 + 状态行
+- [Phase 19](./PHASE19-REPORT.md) — 样式体系对齐 Cindy
 
 ---
 
@@ -68,6 +70,8 @@
 | 分支树测试假绿 | 只验了「输入框有内容」，没验「对话区没空」 | [15](./PHASE15-REPORT.md) |
 | steer 测试随机变红 | 固定 `delay(1500)` 依赖模型速度，改成轮询等流式输出 | [13](./PHASE13-REPORT.md) |
 | 切换模型「全绿」其实没切 | 用的假模型 id 端点不校验，验的是「没报错」不是「真换了」 | [11](./PHASE11-REPORT.md) |
+| 圆角全变尖、气泡变直角 | CSS 变量自引用形成循环，值变无效 | [19](./PHASE19-REPORT.md) |
+| Tailwind 配了但静默不生效 | `viteBuild({configFile})` 路径下 `css.postcss` 没被读到 | [19](./PHASE19-REPORT.md) |
 
 **一句话总结**：看到「不对劲」先看数据，别看像素；看到「全绿」先问一句「它到底验了什么」。
 

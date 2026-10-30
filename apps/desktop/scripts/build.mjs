@@ -44,6 +44,10 @@ const shared = {
   ],
 };
 
+// 0) 先编 CSS：tailwind 在 Vite 的 css.postcss 里不生效（实测），单独跑一遍
+//    postbuild-css.mjs 在 app 根目录（不是 scripts/），Windows 下需 file:// URL
+await import(new URL('../postbuild-css.mjs', import.meta.url).href);
+
 // 1) 渲染层
 await viteBuild({ configFile: path.join(root, 'vite.config.ts') });
 

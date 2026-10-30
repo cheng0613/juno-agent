@@ -1,0 +1,47 @@
+/**
+ * 基础 token —— 数值与 Cindy 的 generated/tokens.css 一致。
+ *
+ * 上游由 @terrazzo 从 DTCG 源生成；这里手抄一份等价内容，
+ * 避免为几十个静态值引入 DTCG 工具链。
+ * 颜色角色在 tokens.css（同样从上游主题解析而来）。
+ */
+@layer base {
+  :root {
+    --app-font-ui-default: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI', Roboto, sans-serif;
+    --app-font-code-default: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', monospace;
+
+    --text-xs: 12px;   --text-xs-line-height: 16px;
+    --text-sm: 14px;   --text-sm-line-height: 20px;
+    --text-base: 16px; --text-base-line-height: 24px;
+    --text-lg: 18px;   --text-lg-line-height: 28px;
+    --text-2xl: 24px;  --text-2xl-line-height: 32px;
+
+    --text-10: 10px; --text-11: 11px; --text-12: 12px; --text-13: 13px;
+    --text-14: 14px; --text-15: 15px; --text-16: 16px; --text-18: 18px;
+    --text-20: 20px; --text-24: 24px; --text-28: 28px;
+
+    --motion-instant: 80ms;
+    --motion-fast: 150ms;
+    --motion-base: 200ms;
+    --motion-enter: 250ms;
+    --motion-exit: 150ms;
+    --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
+    --motion-ease-move: cubic-bezier(0.4, 0, 0.2, 1);
+
+    --space-0: 0px;  --space-1: 0.25rem; --space-2: 0.5rem;  --space-3: 0.75rem;
+    --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem;  --space-8: 2rem;
+    --space-10: 2.5rem; --space-12: 3rem; --space-16: 4rem;
+
+    --radius-none: 0px;
+    --radius-default: 0.25rem;
+    --radius-xl: 0.75rem;
+    --radius-2xl: 1rem;
+    --radius-full: 9999px;
+
+    --size-input-lg: 40px;
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+  }
+}

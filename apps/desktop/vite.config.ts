@@ -10,6 +10,15 @@ export default defineConfig({
   root: '.',
   base: './', // file:// 下必须相对路径，否则打包后白屏
   plugins: [react()],
+  css: {
+    // 样式已经由 postbuild-css.mjs 用 tailwind 编好（src/styles/app.generated.css）。
+    // 这里不要再跑 postcss —— 双重处理会把已展开的样式再改一次。
+    //
+    // 为什么不用 Vite 的 css.postcss 内联配置：实测在
+    // viteBuild({ configFile }) 这条路径下它不生效（产物里没有 utility 类），
+    // 但单独跑 postcss 完全正常。与其和构建器较劲，不如自己明确跑一遍。
+    postcss: { plugins: [] },
+  },
   resolve: {
     alias: {
       '@shared': path.resolve(root, 'src/shared'),

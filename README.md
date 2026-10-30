@@ -24,6 +24,7 @@
 | Phase 16 | 图片输入 | [报告](./docs/PHASE16-REPORT.md) |
 | Phase 17 | 文件回滚（git savepoint） | [报告](./docs/PHASE17-REPORT.md) |
 | Phase 18 | 操作台布局 + 状态行 | [报告](./docs/PHASE18-REPORT.md) |
+| Phase 19 | 样式体系对齐 Cindy（Tailwind + tokens） | [报告](./docs/PHASE19-REPORT.md) |
 
 报告索引与踩坑汇总见 [docs/README.md](./docs/README.md)。
 

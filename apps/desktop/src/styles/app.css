@@ -1,16 +1,37 @@
-/* 唯一来源：design/tokens.css。不要在组件里写死颜色/字号。 */
-@import '../../../../design/tokens.css';
+/*
+ * 样式入口。与 Cindy 同构：Tailwind + design tokens。
+ *   tokens.css          —— 颜色角色（从上游主题解析而来，与 Cindy 完全一致）
+ *   base-tokens.css     —— 字号/间距/圆角/动效
+ *   legacy-aliases.css  —— 旧变量名 → 新 token 的过渡映射
+ *   app.css（本文件）      —— 组件样式：新写的用 utility，旧的逐渐重写
+ */
+@import './tokens.css';
+@import './base-tokens.css';
+@import './legacy-aliases.css';
 
-*, *::before, *::after { box-sizing: border-box; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: var(--font-sans);
-  font-size: var(--text-14);
-  line-height: var(--text-14-lh);
-  color: var(--text-primary);
-  background: var(--bg);
-  overflow: hidden;
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--app-font-ui-default);
+    font-size: var(--text-14);
+    line-height: var(--text-14-lh);
+    color: var(--text-primary);
+    background: var(--surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: var(--text-selection-bg, rgb(65 124 221 / 0.25));
+  }
+
+  html, body, #root { height: 100%; }
+  body { overflow: hidden; }
 }
 
 /* ============ 骨架 ============ */
