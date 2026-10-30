@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Chat } from './Chat';
+import { DiffPanel } from './DiffPanel';
 import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
@@ -8,6 +9,7 @@ import type {
   HostBridge,
   InterruptedTurn,
   SessionSummary,
+  TurnDiffPayload,
   UiMessage,
 } from './shared/ipc';
 
@@ -90,6 +92,10 @@ export function App() {
   const [compacting, setCompacting] = useState(false);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
+  /** 本轮改动；null = 没有任何改动 */
+  const [turnDiff, setTurnDiff] = useState<TurnDiffPayload | null>(null);
+  /** 面板是否展开；关掉后面板不丢，顶栏还能再打开 */
+  const [diffOpen, setDiffOpen] = useState(false);
   // 递增即表示「强制滚到底」：只有切会话/续跑这类主动跳转才用，
   // 流式输出仍然走「贴底才跟随」的保守策略
   const [scrollTick, setScrollTick] = useState(0);
@@ -227,6 +233,20 @@ export function App() {
           return;
         }
 
+        case 'turn_diff': {
+          // 只在有改动时弹面板；没改动不打扰人
+          if (event.changes.length > 0) {
+            setTurnDiff({
+              tracked: event.tracked,
+              changes: event.changes,
+              diff: event.diff,
+              truncated: event.truncated,
+            });
+            setDiffOpen(true);
+          }
+          return;
+        }
+
         case 'compact': {
           // 先本地插一条分隔线给即时反馈；turn 收口时会从库里重拉，
           // 那时会换成持久化的那一行（id 不同，不会重复）
@@ -357,6 +377,9 @@ export function App() {
     liveRef.current = '';
     setScrollTick((n) => n + 1);
     setUsage(null);
+    // 改动面板属于上一轮的，切会话必须清掉，否则会误以为新会话改过文件
+    setTurnDiff(null);
+    setDiffOpen(false);
     void host.contextUsage(id).then(setUsage);
   };
 
@@ -367,6 +390,8 @@ export function App() {
     setMessages(boot.messages);
     // 新会话还没有上下文，不画进度条
     setUsage(null);
+    setTurnDiff(null);
+    setDiffOpen(false);
   };
 
   const answer = async (behavior: 'allow' | 'deny') => {
@@ -471,6 +496,15 @@ export function App() {
             {sessions.find((s) => s.id === activeId)?.title ?? '会话'}
           </span>
           {usage && <UsageMeter usage={usage} onCompact={() => void compactNow()} compacting={compacting} disabled={running} />}
+          {turnDiff && (
+            <button
+              className="ghost topbar-action"
+              title="展开本轮文件改动"
+              onClick={() => setDiffOpen(true)}
+            >
+              改动 {turnDiff.changes.length}
+            </button>
+          )}
           <button
             className="ghost topbar-action"
             disabled={!activeId || running || compacting || messages.length === 0}
@@ -544,6 +578,10 @@ export function App() {
             )}
           </div>
         </div>
+
+        {turnDiff && diffOpen && (
+          <DiffPanel payload={turnDiff} onClose={() => setDiffOpen(false)} />
+        )}
       </main>
 
       {/* ---------------- 审批弹层 ---------------- */}

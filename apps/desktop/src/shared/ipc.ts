@@ -107,6 +107,26 @@ export interface InterruptedTurn {
   hasOutput: boolean;
 }
 
+export type ChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'unknown';
+
+/** 一个文件的改动摘要 */
+export interface FileChange {
+  /** 相对工作目录的路径 */
+  path: string;
+  status: ChangeStatus;
+  insertions: number;
+  deletions: number;
+}
+
+/** 本轮改动了哪些文件 */
+export interface TurnDiffPayload {
+  /** false = 工作目录不是 git 仓库，只有「碰过的路径」没有行级 diff */
+  tracked: boolean;
+  changes: FileChange[];
+  diff: string;
+  truncated: boolean;
+}
+
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
   | { type: 'text'; turnId: string; text: string; isFinal: boolean }
@@ -119,6 +139,7 @@ export type HostEvent =
   | { type: 'session_title'; sessionId: string; title: string }
   | { type: 'compact'; turnId: string | null; trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null }
   | { type: 'steer'; turnId: string; text: string }
+  | ({ type: 'turn_diff'; turnId: string } & TurnDiffPayload)
   | { type: 'error'; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */

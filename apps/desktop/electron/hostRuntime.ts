@@ -40,6 +40,12 @@ import type {
   InterruptedTurn,
 } from '../src/shared/ipc.js';
 
+import {
+  collectTurnDiff,
+  createBaseline,
+  type DiffBaseline,
+} from './turnDiff.js';
+
 export interface HostConfig {
   upstreamRoot: string;
   /** 直接指定 pi 可执行文件；打包后指向 resources/pi-bin/pi.exe */
@@ -134,6 +140,18 @@ export class HostRuntime {
    * 旧订阅会被默默覆盖，那一轮就永远停在 running（落库残留 + 重启后误报中断）。
    */
   private readonly turnUnsubs = new Map<string, () => void>();
+  /**
+   * 本轮动作的基准与痕迹。
+   *
+   * pi 不发 turn_diff（只有 codex 发），所以改动得我们自己算：
+   * 轮开始前记 git 基准，期间收集 tool_use 碰过的路径（非 git 目录的兼底）。
+   */
+  private turnTrace: {
+    turnId: string;
+    cwd: string;
+    baseline: DiffBaseline;
+    paths: string[];
+  } | null = null;
 
   constructor(private readonly cfg: HostConfig) {}
 
@@ -460,6 +478,7 @@ export class HostRuntime {
       if (settled) return;
       this.recorder.onEvent(sessionId, turn.turnId, 'pi', event);
       this.project(event, turn.turnId);
+      this.traceEvent(event);
 
       if (event.turnScope !== 'background' && isTerminalTurnEvent(event)) {
         settled = true;
@@ -468,11 +487,50 @@ export class HostRuntime {
         this.activeTurnId = null;
         unsubscribe();
         this.turnUnsubs.delete(turn.turnId);
+        // 先把轮收口通知发出去（UI 立刻不再转圈），再静悄悄算 diff
+        void this.finishTurnDiff(turn.turnId);
       }
     });
     this.turnUnsubs.set(turn.turnId, unsubscribe);
 
+    // 基准必须在 send 之前拍：send 一返回，模型可能已经开始写文件了
+    this.turnTrace = {
+      turnId: turn.turnId,
+      cwd: this.cfg.workDir,
+      baseline: await createBaseline(this.cfg.workDir),
+      paths: [],
+    };
+
     await session.send(text);
+  }
+
+  /** 记下本轮 tool_use 碰过的路径（非 git 目录时当兼底） */
+  private traceEvent(event: AgentEvent): void {
+    const trace = this.turnTrace;
+    if (!trace) return;
+    if (event.type !== 'tool_use') return;
+    const d = (event.data ?? {}) as Record<string, unknown>;
+    const input = d.input as Record<string, unknown> | undefined;
+    if (!input) return;
+    for (const key of ['path', 'file_path', 'filePath', 'target_path']) {
+      const value = input[key];
+      if (typeof value === 'string' && value) trace.paths.push(value);
+    }
+  }
+
+  /** 轮结束后算改动并广播。失败就静静算了 —— diff 是辅助信息，不该报错打扰人 */
+  private async finishTurnDiff(turnId: string): Promise<void> {
+    const trace = this.turnTrace;
+    if (!trace || trace.turnId !== turnId) return;
+    this.turnTrace = null;
+    try {
+      const diff = await collectTurnDiff(trace.cwd, trace.baseline, trace.paths);
+      this.emit({ type: 'turn_diff', turnId, ...diff });
+    } catch (error) {
+      logger.debug('turn diff unavailable', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /** AgentEvent → 渲染层事件。只映射 UI 需要的，不做业务判断 */

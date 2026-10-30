@@ -235,9 +235,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=queue      → 验输入队列
   //   APP_AUTOTEST=compact    → 验上下文压缩
   //   APP_AUTOTEST=steer      → 验插话与上下文占用
+  //   APP_AUTOTEST=diff       → 验本轮改动面板
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -250,7 +251,9 @@ app.whenReady().then(async () => {
               ? runCompactTest(win, runtime)
               : mode === 'steer'
                 ? runSteerTest(win, runtime)
-                : runAutotest(win, runtime)
+                : mode === 'diff'
+                  ? runDiffTest(win, runtime)
+                  : runAutotest(win, runtime)
     );
   }
 

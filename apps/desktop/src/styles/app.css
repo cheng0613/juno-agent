@@ -807,3 +807,137 @@ body {
   color: var(--text-secondary);
 }
 .queue-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* 本轮改动面板：右侧抽屉，不挤占对话宽度（窄屏时覆盖） */
+.diff-panel {
+  position: absolute;
+  /* 从顶栏下方开始，不盖住会话名和压缩/改动按钮 */
+  top: var(--topbar-h, 37px);
+  right: 0;
+  /* 到输入区上方为止：面板不遮输入框，用户随时能继续对话 */
+  bottom: var(--composer-h, 92px);
+  width: min(460px, 60%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-elevated);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg, -8px 0 24px rgb(0 0 0 / 8%));
+}
+.diff-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.diff-title {
+  flex: 1 1 auto;
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.diff-close {
+  flex: 0 0 auto;
+  font-size: var(--text-16);
+  line-height: 1;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.diff-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+.diff-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-11);
+  line-height: var(--text-11-lh);
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-files {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: var(--space-2) 0;
+}
+.diff-file { border-bottom: 1px solid var(--border); }
+.diff-file > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+}
+.diff-file > summary::-webkit-details-marker { display: none; }
+.diff-file > summary:hover { background: var(--surface-hover); }
+
+.diff-status {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  border-radius: var(--radius-xs);
+}
+.diff-status-added { color: var(--success); }
+.diff-status-deleted { color: var(--danger); }
+.diff-status-modified { color: var(--warning); }
+.diff-status-renamed { color: var(--brand); }
+
+.diff-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;           /* 路径太长时保留尾部文件名 */
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+.diff-stat {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
+.diff-add { color: var(--success); }
+.diff-del { color: var(--danger); }
+
+.diff-body {
+  margin: 0;
+  padding: var(--space-2) 0;
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 420px;
+}
+.diff-body > div {
+  padding: 0 var(--space-4);
+  white-space: pre;
+}
+.dl-add { background: color-mix(in srgb, var(--success) 12%, transparent); }
+.dl-del { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.dl-hunk { color: var(--text-tertiary); }
+.dl-meta { color: var(--text-tertiary); }
+.dl-ctx { color: var(--text-secondary); }
+
+/*
+ * 面板打开时把对话区让出来，而不是盖在上面。
+ * 覆盖式在窄窗口会把消息切掉一半，看起来像布局坏了。
+ * 用 :has() 让 main 自己感知子元素，不必在 React 里传额外 class。
+ */
+.main:has(.diff-panel) > .scroller {
+  padding-right: min(460px, 60%);
+  transition: padding-right var(--motion-base, 200ms) var(--ease-out, ease-out);
+}

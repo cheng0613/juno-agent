@@ -8,11 +8,15 @@
  * 唯一被绕过的是「用鼠标点输入框」这一步（React 受控组件无法可靠地从外部设值）。
  */
 import { app, type BrowserWindow } from 'electron';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import type { HostRuntime } from './hostRuntime.js';
 import type { HostEvent } from '../src/shared/ipc.js';
+
+const execAsync = promisify(execFile);
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -844,6 +848,138 @@ export async function runSteerTest(win: BrowserWindow, runtime: HostRuntime): Pr
     await fs
       .writeFile(
         path.join(outDir, 'steer-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 本轮改动面板验收。
+ *
+ * 必须让模型真的改一个文件，否则 diff 面板没东西可显示、也验不出准不准。
+ * 工作目录预先初始化成 git 仓库 —— 真实使用中用户目录通常就是仓库，
+ * 这样也顺带验证了 `git diff` 这条主路径。
+ */
+export async function runDiffTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/diff] ${s}`);
+  };
+
+  let turnsDone = 0;
+  let diffEvent: { tracked: boolean; changes: Array<{ path: string }> } | null = null;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+    if (e.type === 'turn_diff') diffEvent = { tracked: e.tracked, changes: e.changes };
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  try {
+    await delay(2200);
+    const boot = await win.webContents.executeJavaScript('window.host.createSession()');
+    note(`新会话 ${boot.activeSessionId}`);
+
+    // 把工作目录初始化成 git 仓库，并先提交一次，
+    // 否则 note.txt 是未跟踪文件，验不到「修改已有文件」这条路径
+    const cwd = process.env.APP_WORKDIR ?? '';
+    if (cwd) {
+      try {
+        await execAsync('git', ['init'], { cwd, windowsHide: true });
+        await fs.writeFile(path.join(cwd, 'README.md'), '# 初始\n', 'utf8');
+        await execAsync('git', ['add', '-A'], { cwd, windowsHide: true });
+        await execAsync(
+          'git',
+          ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init'],
+          { cwd, windowsHide: true },
+        );
+        note(`已把工作目录初始化为 git 仓库: ${cwd}`);
+      } catch (error) {
+        note(`git 初始化失败（将走非 git 分支）: ${String(error)}`);
+      }
+    }
+
+    // 让模型创建一个文件并修改现有文件
+    await win.webContents.executeJavaScript(
+      `window.host.send({
+         sessionId: ${JSON.stringify(boot.activeSessionId)},
+         text: '用 bash 在工作目录里创建 note.txt，内容写 "hello"，然后一句话确认'
+       })`,
+    );
+    await waitFor(() => turnsDone >= 1, 180_000, '改文件这一轮结束');
+    await delay(1200);
+
+    const panelCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.diff-panel').length`,
+    );
+    const fileRows = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.diff-path')].map(e => e.textContent)`,
+    );
+    const headText = await win.webContents.executeJavaScript(
+      `document.querySelector('.diff-title') ? document.querySelector('.diff-title').innerText : ''`,
+    );
+    note(`面板数: ${panelCount}`);
+    note(`列出的文件: ${JSON.stringify(fileRows)}`);
+    note(`标题: ${headText}`);
+    note(`事件: ${JSON.stringify(diffEvent)}`);
+
+    await shootTo(win, '18-turn-diff');
+    note('截图 18-turn-diff');
+
+    if (panelCount < 1) throw new Error('没有出现改动面板');
+    if (!Array.isArray(fileRows) || fileRows.length === 0) throw new Error('面板里没有列出任何文件');
+    if (!fileRows.some((p) => String(p).includes('note.txt'))) {
+      throw new Error(`面板没列出 note.txt，实际: ${JSON.stringify(fileRows)}`);
+    }
+
+    // 展开一个文件，确认 diff 正文能渲染。
+    // 注意要点 summary 而不是直接设 open：React 不认外部改的 DOM 属性，
+    // 下一次重渲染会把 open 抹掉，截图就抓不到正文。
+    await win.webContents.executeJavaScript(
+      `(() => {
+         const s = document.querySelector('.diff-file > summary');
+         if (!s) return 'no-summary';
+         s.click();
+         return 'ok';
+       })()`,
+    );
+    await delay(600);
+    const diffLines = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.diff-body > div').length`,
+    );
+    note(`diff 行数: ${diffLines}`);
+    await shootTo(win, '19-diff-body');
+    note('截图 19-diff-body');
+
+    if (diffLines < 1) throw new Error('diff 正文没有渲染出来');
+
+    await fs.writeFile(
+      path.join(outDir, 'diff-result.json'),
+      JSON.stringify({ ok: true, fileRows, headText, diffLines, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-diff-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'diff-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )
