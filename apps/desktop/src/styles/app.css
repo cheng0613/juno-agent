@@ -1222,3 +1222,10 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   direction: rtl;
   text-align: left;
 }
+
+/* 久无响应：转圈停下并变警告色，比一直转更诚实 */
+.status-spinner-stalled {
+  animation: none;
+  border-color: var(--warning);
+  border-top-color: transparent;
+}

@@ -27,6 +27,7 @@
 | Phase 19 | 样式体系对齐 Cindy（Tailwind + tokens） | [报告](./docs/PHASE19-REPORT.md) |
 | Phase 20 | 配置持久化 + 首次启动向导 | [报告](./docs/PHASE20-REPORT.md) |
 | Phase 21 | 错误边界（D 类） | [报告](./docs/PHASE21-REPORT.md) |
+| Phase 22 | 卡住提示（D 类） | [报告](./docs/PHASE22-REPORT.md) |
 
 报告索引与踩坑汇总见 [docs/README.md](./docs/README.md)。
 
@@ -152,13 +153,15 @@ node dist/selftest.js        # 6/6
 | `APP_API` | `openai-completions` | 协议 |
 | `APP_APPROVAL` | `ipc` | `ipc` = 弹审批卡；`allow` = 全放行 |
 | `APP_CONTEXT_WINDOW` | `200000` | 上下文窗口，用于 models.json 与压缩判定 |
+| `APP_STALL_MINUTES` | `15` | 一轮零事件多久判定卡死（引擎级中止）；0 = 关闭 |
+| `APP_STALL_HINT_SEC` | `180` | 界面多久提示「没有响应」（秒） |
 | `APP_COMPACT_PCT` | 由 pi 决定（约 90） | 自动压缩在窗口的百分之几处触发；值越小压得越早 |
 | `APP_EFFORTS` | 空 = 不支持思考档位 | 逗号分隔的档位，如 `minimal,low,medium,high,xhigh,max`；**配置后才在 UI 显示** |
 | `APP_MODELS` | 空 = 只有一个模型 | JSON 数组，配两个以上才出现模型切换下拉。例：`[{"id":"m1","label":"模型一"},{"id":"m2","label":"模型二"}]` |
 | `APP_EXPORT_DIR` | `%USERPROFILE%/Documents/Agent 导出` | 导出 HTML 的落地目录 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化；`restart` = 验保存即重启；`error` = 验错误边界 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化；`restart` = 验保存即重启；`error` = 验错误边界；`watchdog` = 验卡住提示 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -223,6 +226,7 @@ node dist/selftest.js        # 6/6
 - 配置持久化：无 key 时出现全屏向导；保存后 `encrypted: true`，文件里无明文 key
 - 保存即重启：跑着时保存弹确认框，点「稍后」窗口保留、确认框关闭
 - 错误边界：渲染异常显示恢复页（非白屏）；未捕获的 Promise 拒绝弹提示
+- 卡住提示：工具执行中（sleep 8 超过阈值）不误报；真无响应时 spinner 停下并变色
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

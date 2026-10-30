@@ -16,9 +16,12 @@ import type { TurnStatus } from './shared/ipc';
  */
 export function StatusLine({ status }: { status: TurnStatus | null }) {
   const [, forceTick] = useState(0);
+  /** 本地记录收到这个 status 的时刻，用来把 idleMs 往后推 */
+  const [seenAt, setSeenAt] = useState(0);
 
   useEffect(() => {
     if (!status) return;
+    setSeenAt(Date.now());
     // 每秒重绘一次只为更新时长；token 数变了宿主会推新 status
     const timer = setInterval(() => forceTick((n) => n + 1), 1000);
     return () => clearInterval(timer);
@@ -26,22 +29,40 @@ export function StatusLine({ status }: { status: TurnStatus | null }) {
 
   if (!status) return null;
 
+  // 宿主只在有事件时推；两次推送之间的空闲要本地累加，
+  // 否则「多久没动静」会一直显示推送那一刻的值。
+  const idleMs = status.idleMs + (seenAt ? Date.now() - seenAt : 0);
+  const stalled = idleMs >= status.stallAfterMs;
+
   return (
     <div
       data-testid="status-line"
       className="flex items-center gap-2 px-2 pb-2 text-12 text-text-secondary"
     >
-      <span className="status-spinner" />
+      <span
+        className={`status-spinner${stalled ? ' status-spinner-stalled' : ''}`}
+      />
       <span data-testid="status-label" className="min-w-0 flex-[0_1_auto] truncate">
-        {status.label}…
+        {stalled ? `已经 ${formatIdle(idleMs)}没有任何响应` : `${status.label}…`}
       </span>
       <span className="flex-1" />
-      <span data-testid="status-meta" className="shrink-0 tabular-nums text-text-tertiary">
+      <span
+        data-testid="status-meta"
+        className={`shrink-0 tabular-nums ${stalled ? 'text-[var(--warning)]' : 'text-text-tertiary'}`}
+      >
         {formatDuration(Date.now() - status.startedAt)}
         {status.tokens != null && status.tokens > 0 ? ` · ${formatTokens(status.tokens)} tokens` : ''}
       </span>
     </div>
   );
+}
+
+/** 卡住时的时长说法：不足一分钟就报秒，别硬凑成「1 分钟」 */
+function formatIdle(ms: number): string {
+  const seconds = Math.max(1, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} 分钟`;
 }
 
 /** 1.2s / 1m 23s / 1h 05m —— 超过一分钟就不显示秒了，秒数在长任务里没意义 */

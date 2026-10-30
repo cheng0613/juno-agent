@@ -78,6 +78,13 @@ export interface HostConfig {
   apiKey?: string;
   /** 多模型清单（JSON 字符串）；与 APP_MODELS 同格式 */
   modelsJson?: string;
+  /**
+   * 一轮零事件多久后判定卡死（毫秒）。0 = 关闭。
+   *
+   * 引擎自己的默认是 45 分钟 —— 对用户来说太久了，
+   * 45 分钟里界面只会一直转圈，人早放弃了。
+   */
+  turnStallMs?: number;
 }
 
 export interface EnvOverrides {
@@ -103,6 +110,12 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig {
     process.env.APP_DATA_DIR ?? path.join(os.tmpdir(), 'spike-desktop');
   const pick = (envName: string, fileValue: string | undefined, fallback: string): string =>
     process.env[envName]?.trim() || fileValue?.trim() || fallback;
+
+  // 卡死判定阈值：默认 15 分钟。
+  // 引擎默认 45 分钟太长 —— 那段时间界面只会静默转圈。
+  const stallMinutes = Number(process.env.APP_STALL_MINUTES ?? 15);
+  const turnStallMs =
+    Number.isFinite(stallMinutes) && stallMinutes > 0 ? stallMinutes * 60_000 : 0;
 
   return {
     upstreamRoot:
@@ -132,6 +145,7 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig {
     apiKey: process.env.APP_PI_API_KEY?.trim() || file.apiKey?.trim() || undefined,
     /** 多模型清单（JSON 字符串），运行期解析 */
     modelsJson: process.env.APP_MODELS?.trim() || file.models?.trim() || undefined,
+    turnStallMs,
   };
 }
 
@@ -336,6 +350,18 @@ export class HostRuntime {
   private readonly toolByTurn = new Map<string, string>();
   /** 每轮最新的 token 用量 */
   private readonly lastUsageTokens = new Map<string, number>();
+  /**
+   * 每轮最后一次收到事件的时刻。
+   * 状态行用它算「多久没动静了」，超过阈值就提示可能卡住。
+   */
+  private readonly lastEventAt = new Map<string, number>();
+  /**
+   * 每轮「正在执行中的工具」。
+   *
+   * 工具从调用到返回之间可能很久没事件（`sleep 60`、大文件读写），
+   * 那是正常执行，不是卡死。不区分的话会把正常的长命令误报成无响应。
+   */
+  private readonly runningTools = new Map<string, string>();
 
   /** 可选模型清单。启动时解析一次，运行期不变 */
   private readonly catalog: ReturnType<typeof parseModelCatalog>;
@@ -531,6 +557,8 @@ export class HostRuntime {
       workingDir: this.cfg.workDir,
       model: this.cfg.model,
       title,
+      // 传 undefined 时引擎用自己的 45 分钟默认值；我们显式给 15 分钟
+      ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
     });
     this.attach(session);
     return session.id;
@@ -554,6 +582,7 @@ export class HostRuntime {
       workingDir: meta.workDir,
       model: meta.model,
       title: meta.title,
+      ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
     });
     this.attach(session);
     // 重建会话后必须把额外目录重新交给引擎 —— 它们只存在于运行时，
@@ -779,6 +808,8 @@ export class HostRuntime {
         this.emit({ type: 'status', status: null });
         this.toolByTurn.delete(turn.turnId);
         this.lastUsageTokens.delete(turn.turnId);
+        this.lastEventAt.delete(turn.turnId);
+        this.runningTools.delete(turn.turnId);
         this.activeTurnId = null;
         unsubscribe();
         this.turnUnsubs.delete(turn.turnId);
@@ -861,6 +892,7 @@ export class HostRuntime {
         const toolName = String(d?.toolName ?? '?');
         // 记下来给状态行用：引擎只会说「Working…」，具体在跑什么这个更准
         this.toolByTurn.set(turnId, toolName);
+        this.runningTools.set(turnId, String(d?.toolUseId ?? toolName));
         this.emit({
           type: 'tool_use',
           turnId,
@@ -872,6 +904,8 @@ export class HostRuntime {
       }
       case 'tool_result_full': {
         const d = event.data as Record<string, unknown>;
+        // 工具结束了，「正在执行」的标记要清掉，否则后面真的卡住也报不出来
+        this.runningTools.delete(turnId);
         this.emit({
           type: 'tool_result',
           turnId,
@@ -1350,6 +1384,9 @@ export class HostRuntime {
    * 这里翻成人话；翻不了就原样透传，总比不显示强。
    */
   private projectStatus(event: AgentEvent, turnId: string): void {
+    // 只要收到任何事件就算「活着」，含思考/工具/状态本身
+    this.lastEventAt.set(turnId, Date.now());
+
     const d = (event.data ?? {}) as { status?: string; isRunning?: boolean };
     if (d.isRunning === false) {
       this.emit({ type: 'status', status: null });
@@ -1360,6 +1397,9 @@ export class HostRuntime {
     const turn = this.turns.get(turnId);
     const startedAt = turn?.startedAt ?? Date.now();
     const label = humanizeStatus(d.status, this.lastToolName(turnId));
+    const idleMs = Date.now() - (this.lastEventAt.get(turnId) ?? startedAt);
+    // 有工具在执行时不算卡住：长命令本来就没有中间事件
+    const toolRunning = this.runningTools.get(turnId);
 
     this.emit({
       type: 'status',
@@ -1367,6 +1407,13 @@ export class HostRuntime {
         label,
         startedAt,
         tokens: this.lastUsageTokens.get(turnId) ?? null,
+        idleMs,
+        // 工具在跑时把阈值拉到无限，等同于「别报卡住」
+        // 超过阈値没任何事件就提醒；真正的中止由引擎（15 分钟）做。
+        // 测试用 APP_STALL_HINT_SEC 调短，否则验一次要等 3 分钟。
+        stallAfterMs: toolRunning
+          ? Number.POSITIVE_INFINITY
+          : Number(process.env.APP_STALL_HINT_SEC ?? 180) * 1000,
       },
     });
   }

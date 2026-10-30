@@ -224,6 +224,10 @@ export interface TurnStatus {
   startedAt: number;
   /** 当前上下文 token；未知则为 null */
   tokens: number | null;
+  /** 多久没收到任何事件了（毫秒） */
+  idleMs: number;
+  /** 超过这个时长就提示「可能卡住」 */
+  stallAfterMs: number;
 }
 
 /** 配置状态（不含 key 明文） */

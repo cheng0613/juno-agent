@@ -37,6 +37,7 @@
 - [Phase 19](./PHASE19-REPORT.md) — 样式体系对齐 Cindy
 - [Phase 20](./PHASE20-REPORT.md) — 配置持久化 + 首次启动向导
 - [Phase 21](./PHASE21-REPORT.md) — 错误边界
+- [Phase 22](./PHASE22-REPORT.md) — 卡住提示（看门狗）
 
 ---
 
@@ -77,6 +78,7 @@
 | 双击 exe 报 `no_key` | key 只能靠环境变量传，没有配置入口 | [20](./PHASE20-REPORT.md) |
 | 渲染层异常直接白屏 | 没有 error boundary；且只有边界接不到事件/Promise 错误 | [21](./PHASE21-REPORT.md) |
 | 改样式后测试集体变红 | 测试依赖 class 名，换方案就会断；改用 data-testid | [21](./PHASE21-REPORT.md) |
+| 长命令被误报成「没有响应」 | 只按「多久没事件」判断，没区分「有工具正在执行」 | [22](./PHASE22-REPORT.md) |
 
 **一句话总结**：看到「不对劲」先看数据，别看像素；看到「全绿」先问一句「它到底验了什么」。
 

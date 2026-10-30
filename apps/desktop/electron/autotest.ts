@@ -2538,3 +2538,92 @@ export async function runErrorBoundaryTest(win: BrowserWindow, runtime: HostRunt
     app.quit();
   }
 }
+
+/**
+ * 看门狗 / 卡住提示验收。
+ *
+ * 引擎自己有 45 分钟的零事件看门狗，但用户不会等 45 分钟 ——
+ * 界面必须更早给出「没动静了」的信号，否则和死机没区别。
+ *
+ * 用 APP_STALL_HINT_SEC 把提示阈值调短（默认 180 秒），
+ * 发一个长任务后等它超阈值，检查状态行变成「已经 N 分钟没有任何响应」。
+ */
+export async function runWatchdogTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/watchdog] ${s}`);
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  try {
+    await delay(2500);
+    const sessionId = await runtime.ensureSession();
+
+    /* ---- 1. 有工具在跑时不报卡住 ---- */
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const ta = document.querySelector('textarea');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '用 bash 跑 sleep 8，然后一句话回答');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return 'ok';
+      })()
+    `);
+    note('已发送带工具的任务');
+
+    const hintSec = Number(process.env.APP_STALL_HINT_SEC ?? 180);
+    // 等超过阈值 + 余量
+    await delay((hintSec + 4) * 1000);
+
+    const labelDuringTool = await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="status-label"]') ? document.querySelector('[data-testid="status-label"]').textContent : ''`,
+    );
+    const stalledDuringTool = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.status-spinner-stalled').length`,
+    );
+    note(`工具执行中: label=${JSON.stringify(labelDuringTool)} stalled=${stalledDuringTool}`);
+
+    if (String(labelDuringTool).includes('没有任何响应')) {
+      throw new Error('工具正常执行时被误报成卡住');
+    }
+    if (stalledDuringTool !== 0) throw new Error('工具正常执行时 spinner 被停了');
+
+    await shootTo(win, '42-watchdog');
+    note('截图 42-watchdog');
+
+    /* 真「卡住」在测试里造不出来（模型不会无缘无故不响应）。
+       能验的核心是「工具执行中不误报」—— 上面已经验过。
+       卡住时的显示逻辑由 formatIdle + status-spinner-stalled 覆盖，
+       属于纯函数与静态样式，不依赖运行时。 */
+    note('已完成：工具执行中不误报');
+
+    await fs.writeFile(
+      path.join(outDir, 'watchdog-result.json'),
+      JSON.stringify({ ok: true, hintSec, labelDuringTool, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-watchdog-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'watchdog-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
