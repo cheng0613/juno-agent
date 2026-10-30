@@ -930,13 +930,16 @@ export async function runDiffTest(win: BrowserWindow, runtime: HostRuntime): Pro
     await delay(1200);
 
     const panelCount = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.diff-panel').length`,
+      `document.querySelectorAll('[data-testid="diff-panel"]').length`,
     );
     const fileRows = await win.webContents.executeJavaScript(
       `[...document.querySelectorAll('.diff-path')].map(e => e.textContent)`,
     );
     const headText = await win.webContents.executeJavaScript(
-      `document.querySelector('.diff-title') ? document.querySelector('.diff-title').innerText : ''`,
+      `(() => {
+         const p = document.querySelector('[data-testid="diff-panel"]');
+         return p && p.firstElementChild ? p.firstElementChild.innerText.replace(/\\s+/g, ' ').trim() : '';
+       })()`,
     );
     note(`面板数: ${panelCount}`);
     note(`列出的文件: ${JSON.stringify(fileRows)}`);
@@ -957,7 +960,7 @@ export async function runDiffTest(win: BrowserWindow, runtime: HostRuntime): Pro
     // 下一次重渲染会把 open 抹掉，截图就抓不到正文。
     await win.webContents.executeJavaScript(
       `(() => {
-         const s = document.querySelector('.diff-file > summary');
+         const s = document.querySelector('[data-testid="diff-file"] > summary');
          if (!s) return 'no-summary';
          s.click();
          return 'ok';
@@ -1484,10 +1487,10 @@ export async function runTaskTest(win: BrowserWindow, runtime: HostRuntime): Pro
 
     await delay(1200);
     const cardCount = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.task-card').length`,
+      `document.querySelectorAll('[data-testid="task-card"]').length`,
     );
     const itemCount = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.task-item').length`,
+      `document.querySelectorAll('[data-testid="task-item"]').length`,
     );
     note(`界面卡片数: ${cardCount} / 条目数: ${itemCount}`);
     await shootTo(win, '27-tasks');
@@ -1590,7 +1593,7 @@ export async function runExtraDirsTest(win: BrowserWindow, runtime: HostRuntime)
     );
     await delay(900);
     const panelRows = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.dirs-item').length`,
+      `document.querySelectorAll('[data-testid="dirs-item"]').length`,
     );
     note(`面板条目数: ${panelRows}`);
     await shootTo(win, '29-extra-dirs');
@@ -1746,10 +1749,10 @@ export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     );
     await delay(900);
     const rows = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.tree-row').length`,
+      `document.querySelectorAll('[data-testid="tree-row"]').length`,
     );
     const replayBtns = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.tree-replay').length`,
+      `document.querySelectorAll('[data-testid="tree-replay"]').length`,
     );
     note(`面板行数: ${rows} / 重来按钮数: ${replayBtns}`);
     await shootTo(win, '31-tree');
@@ -1762,7 +1765,7 @@ export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     // 选第一个会把历史退成空（那时后面什么都没有），验证不了「重建」
     const clicked = await win.webContents.executeJavaScript(
       `(() => {
-         const all = [...document.querySelectorAll('.tree-replay')];
+         const all = [...document.querySelectorAll('[data-testid="tree-replay"]')];
          const b = all[all.length - 1];
          if (!b) return 'missing';
          if (b.disabled) return 'disabled';
@@ -2078,7 +2081,7 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     await delay(900);
     const clickedReplay = await win.webContents.executeJavaScript(
       `(() => {
-         const all = [...document.querySelectorAll('.tree-replay')];
+         const all = [...document.querySelectorAll('[data-testid="tree-replay"]')];
          const b = all[all.length - 1];
          if (!b) return 'missing';
          b.click();
@@ -2092,7 +2095,7 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
       `document.querySelectorAll('.bubble-ai, .row-user').length`,
     );
     const diffPanel = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.diff-panel').length`,
+      `document.querySelectorAll('[data-testid="diff-panel"]').length`,
     );
     note(`回退后对话气泡数: ${bubbles} / 改动面板数: ${diffPanel}`);
 
@@ -2175,11 +2178,11 @@ export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): P
     while (Date.now() - startedAt < 60_000) {
       const info = await win.webContents.executeJavaScript(
         `(() => {
-           const el = document.querySelector('.status-line');
+           const el = document.querySelector('[data-testid="status-line"]');
            if (!el) return null;
            return {
-             label: el.querySelector('.status-label') ? el.querySelector('.status-label').textContent : '',
-             meta: el.querySelector('.status-meta') ? el.querySelector('.status-meta').textContent : '',
+             label: el.querySelector('[data-testid="status-label"]') ? el.querySelector('[data-testid="status-label"]').textContent : '',
+             meta: el.querySelector('[data-testid="status-meta"]') ? el.querySelector('[data-testid="status-meta"]').textContent : '',
            };
          })()`,
       );
@@ -2189,7 +2192,7 @@ export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): P
         note(`状态行: label=${JSON.stringify(info.label)} meta=${JSON.stringify(info.meta)}`);
         await delay(2500); // 等两秒让时长数字走起来
         const later = await win.webContents.executeJavaScript(
-          `document.querySelector('.status-meta') ? document.querySelector('.status-meta').textContent : ''`,
+          `document.querySelector('[data-testid="status-meta"]') ? document.querySelector('[data-testid="status-meta"]').textContent : ''`,
         );
         note(`两秒后 meta: ${JSON.stringify(later)}`);
         await shootTo(win, '36-status');
@@ -2206,7 +2209,7 @@ export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): P
     while (turnsDone === 0 && Date.now() - waitStart < 180_000) await delay(300);
     await delay(1500);
     const stillThere = await win.webContents.executeJavaScript(
-      `document.querySelectorAll('.status-line').length`,
+      `document.querySelectorAll('[data-testid="status-line"]').length`,
     );
     note(`轮结束后状态行数量: ${stillThere}`);
     if (stillThere !== 0) throw new Error('轮结束后状态行没消失');

@@ -10,6 +10,9 @@ import type { TurnStatus } from './shared/ipc';
  *
  * 时长在客户端自己走：靠宿主每秒推一次 IPC 太浪费，
  * 而且网络/进程抖动会让秒数跳。
+ *
+ * 样式用 Tailwind utility（与上游 Cindy 一致的写法）；
+ * 旋转动画比较特殊，留在 app.css 里。
  */
 export function StatusLine({ status }: { status: TurnStatus | null }) {
   const [, forceTick] = useState(0);
@@ -24,11 +27,16 @@ export function StatusLine({ status }: { status: TurnStatus | null }) {
   if (!status) return null;
 
   return (
-    <div className="status-line">
+    <div
+      data-testid="status-line"
+      className="flex items-center gap-2 px-2 pb-2 text-12 text-text-secondary"
+    >
       <span className="status-spinner" />
-      <span className="status-label">{status.label}…</span>
-      <span className="status-spacer" />
-      <span className="status-meta">
+      <span data-testid="status-label" className="min-w-0 flex-[0_1_auto] truncate">
+        {status.label}…
+      </span>
+      <span className="flex-1" />
+      <span data-testid="status-meta" className="shrink-0 tabular-nums text-text-tertiary">
         {formatDuration(Date.now() - status.startedAt)}
         {status.tokens != null && status.tokens > 0 ? ` · ${formatTokens(status.tokens)} tokens` : ''}
       </span>
