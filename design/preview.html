@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Design Tokens · 规格预览</title>
+<style>
+/* ============================================================
+ * Design Tokens  —  单文件、零依赖、无构建
+ * ============================================================
+ * 结构：primitives → semantic。不设 component 层（见文末说明）。
+ * 主题：默认 light，`.dark` 或 `[data-theme="dark"]` 覆盖。
+ *
+ * 参考自开源项目 Cindy（Apache-2.0）的 design-tokens 数值体系，
+ * 已去除其品牌命名与专有资源。数值本身不受版权限制。
+ * ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---------- 1. 排版 ---------- */
+  --font-sans: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont,
+    'PingFang SC', 'Hiragino Sans GB', 'HarmonyOS Sans SC', 'Microsoft YaHei UI',
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI',
+    Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', 'PingFang SC', 'Microsoft YaHei UI', monospace;
+
+  /* 字号：13/14/15/16 是主力区间，UI 默认 14，正文 15 */
+  --text-11: 11px;   --text-11-lh: 14px;
+  --text-12: 12px;   --text-12-lh: 16px;
+  --text-13: 13px;   --text-13-lh: 18px;
+  --text-14: 14px;   --text-14-lh: 20px;
+  --text-15: 15px;   --text-15-lh: 24px;
+  --text-16: 16px;   --text-16-lh: 24px;
+  --text-18: 18px;   --text-18-lh: 26px;
+  --text-20: 20px;   --text-20-lh: 28px;
+  --text-24: 24px;   --text-24-lh: 32px;
+  --text-28: 28px;   --text-28-lh: 36px;
+
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+
+  --leading-tight: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+
+  /* ---------- 2. 间距（4px 基准） ---------- */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+
+  /* ---------- 3. 圆角 ---------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
+
+  /* ---------- 4. 动效 ---------- */
+  --motion-instant: 80ms;
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-enter: 250ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);     /* 入场，轻微回弹 */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);         /* 退场 */
+  --ease-move: cubic-bezier(0.4, 0, 0.2, 1);     /* 位移/布局变化 */
+
+  /* ---------- 5. 层级 ---------- */
+  --z-base: 0;
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+
+  /* ---------- 6. 颜色：基底 ----------
+   * 底色偏暖（纸感），不是中性灰。这是观感上最容易被忽略的一处。
+   * 刻意让 surface == background：主区域不分层，层次交给
+   * surface-elevated + border 撑。
+   */
+  --bg: #f4f4ef;
+  --surface: #f4f4ef;
+  --surface-elevated: #fdfdf9;
+  --surface-sunken: #ecebe5;
+
+  /* 半透明叠层：叠在任意背板上都成立，比实色更耐改 */
+  --surface-chip: rgb(0 0 0 / 5%);
+  --surface-hover: rgb(0 0 0 / 5%);
+  --surface-active: rgb(0 0 0 / 9%);
+
+  --border: rgb(0 0 0 / 8%);
+  --border-strong: rgb(0 0 0 / 15%);
+  --border-focus: rgb(79 70 229 / 55%);
+
+  /* ---------- 7. 颜色：文字 ----------
+   * 文字用实色而非 alpha，渲染更可控（尤其小字号 + 抗锯齿）。
+   */
+  --text-primary: #1b1a17;
+  --text-secondary: #5c5952;
+  --text-tertiary: #8a877f;
+  --text-placeholder: #b3b0a8;
+  --text-disabled: #cfccc4;
+  --text-inverse: #fdfdf9;
+
+  /* ---------- 8. 颜色：主色 ----------
+   * 主 CTA 用近黑（ink），品牌色只用于链接/焦点/选中态。
+   * 这是 Vercel / Linear 那一路做法：主按钮不抢眼，整体更沉稳。
+   * 想要彩色主按钮，把 --ink 换成 --brand 即可。
+   */
+  --ink: #1b1a17;
+  --ink-hover: #33322d;
+  --ink-active: #000000;
+
+  --brand: #4f46e5;
+  --brand-hover: #4338ca;
+  --brand-soft: #eef0fe;
+  --brand-fg: #ffffff;
+
+  /* ---------- 9. 颜色：状态 ---------- */
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --warning: #d97706;
+  --warning-soft: #fef3c7;
+  --success: #16a34a;
+  --success-soft: #dcfce7;
+  --info: #2563eb;
+  --info-soft: #dbeafe;
+
+  /* ---------- 10. 阴影 ----------
+   * 纸感底上阴影要浅，否则显脏。
+   */
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-sm: 0 2px 6px rgb(0 0 0 / 6%);
+  --shadow-md: 0 6px 20px rgb(0 0 0 / 8%);
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 12%);
+}
+
+/* ============================================================
+ *   Dark
+ * ============================================================ */
+.dark,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #181816;
+  --surface: #181816;
+  --surface-elevated: #212120;
+  --surface-sunken: #121211;
+
+  --surface-chip: rgb(255 255 255 / 6%);
+  --surface-hover: rgb(255 255 255 / 6%);
+  --surface-active: rgb(255 255 255 / 10%);
+
+  --border: rgb(255 255 255 / 10%);
+  --border-strong: rgb(255 255 255 / 18%);
+  --border-focus: rgb(139 133 248 / 60%);
+
+  /* 暗色下纯白文字会发烫，用略降饱和的暖白 */
+  --text-primary: #e8e6df;
+  --text-secondary: #a8a59c;
+  --text-tertiary: #7a776f;
+  --text-placeholder: #5f5c56;
+  --text-disabled: #4a4844;
+  --text-inverse: #181816;
+
+  /* 暗色主 CTA 反过来用近白 */
+  --ink: #eeeeea;
+  --ink-hover: #ffffff;
+  --ink-active: #ffffff;
+
+  --brand: #8b85f8;
+  --brand-hover: #a5a0fa;
+  --brand-soft: #1e1b3a;
+  --brand-fg: #181816;
+
+  --danger: #f87171;
+  --danger-soft: #3a1a1a;
+  --warning: #fbbf24;
+  --warning-soft: #3a2a10;
+  --success: #4ade80;
+  --success-soft: #14301c;
+  --info: #60a5fa;
+  --info-soft: #16233a;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-sm: 0 2px 6px rgb(0 0 0 / 35%);
+  --shadow-md: 0 6px 20px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 55%);
+}
+
+/* ============================================================
+ *   Base —— 只做最低限度的兜底，不绑架业务样式
+ * ============================================================ */
+html {
+  font-family: var(--font-sans);
+  font-size: var(--text-14);
+  line-height: var(--text-14-lh);
+  color: var(--text-primary);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+}
+
+::selection {
+  background: var(--brand-soft);
+  color: var(--text-primary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+ *   为什么不建 component 层
+ * ============================================================
+ * 上游有 501 个 component 角色（`settings-badge-connected`、
+ * `msg-tool-card-border` 这种粒度），那是 11 个主题 + 两年兼容压力
+ * 长出来的结果。
+ *
+ * 从零起步时这样做会直接失控：
+ *   1. 改一次颜色要动几百处
+ *   2. 没人能记住 501 个名字，最后还是会写死 hex
+ *   3. 组件一旦重构，token 全成死代码
+ *
+ * 正确顺序是反的：先只给真正跨组件复用的语义角色建 token，
+ * 等某个组件确实需要在不同主题下表现不同，再单独抽它的角色。
+ * 一个健康的起点是 30～50 个。
+ * ============================================================ */
+
+
+/* ---------- 预览页自身的样式（不属于 token） ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-primary);
+  transition: background var(--motion-base) var(--ease-move),
+              color var(--motion-base) var(--ease-move);
+}
+
+.wrap { max-width: 720px; margin: 0 auto; padding: 0 var(--space-4) var(--space-24); }
+
+header {
+  position: sticky; top: 0; z-index: var(--z-sticky);
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin: 0 calc(var(--space-4) * -1) var(--space-2);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: var(--text-15); line-height: var(--text-15-lh); font-weight: var(--font-semibold); margin: 0; flex: 1; }
+header .meta { font-size: var(--text-12); color: var(--text-tertiary); }
+
+button.toggle {
+  font: inherit; font-size: var(--text-13);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-chip);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+button.toggle:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+h2 {
+  font-size: var(--text-13); font-weight: var(--font-semibold);
+  color: var(--text-tertiary); text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: var(--space-8) 0 var(--space-3);
+}
+h2:first-of-type { margin-top: var(--space-4); }
+
+.card {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+
+/* 色板 */
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); }
+.sw { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.sw .chip { height: 44px; }
+.sw .lab { padding: var(--space-2) var(--space-2) var(--space-2); font-size: var(--text-11); }
+.sw .name { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-11); }
+.sw .hex { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-11); }
+
+/* 排版 */
+.spec { display: flex; align-items: baseline; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.spec:last-child { border-bottom: 0; }
+.spec .k { font-family: var(--font-mono); font-size: var(--text-11); color: var(--text-tertiary); width: 84px; flex: none; }
+.spec .v { flex: 1; }
+
+/* 间距 */
+.bars { display: flex; flex-direction: column; gap: var(--space-2); }
+.bar-row { display: flex; align-items: center; gap: var(--space-3); }
+.bar-row .k { font-family: var(--font-mono); font-size: var(--text-11); color: var(--text-tertiary); width: 76px; flex: none; }
+.bar { height: 12px; background: var(--brand); border-radius: 2px; opacity: .75; }
+
+/* 圆角 */
+.radii { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.radii div {
+  width: 76px; height: 56px; display: grid; place-items: center;
+  background: var(--surface-chip); border: 1px solid var(--border-strong);
+  font-family: var(--font-mono); font-size: var(--text-11); color: var(--text-tertiary);
+}
+
+/* 动效 */
+.motion-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.motion-demo {
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--surface-chip); border: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: var(--text-11); color: var(--text-secondary);
+  cursor: pointer;
+  transition: transform var(--motion-base) var(--ease-out),
+              background var(--motion-base) var(--ease-out);
+}
+.motion-demo:hover { transform: translateY(-4px); background: var(--brand-soft); color: var(--brand); }
+
+/* ---------- 组件样例 ---------- */
+.demo { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.bubble-user {
+  align-self: flex-end; max-width: 82%;
+  background: var(--ink); color: var(--text-inverse);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-xs) var(--radius-lg);
+  font-size: var(--text-15); line-height: var(--leading-relaxed);
+}
+.bubble-ai { font-size: var(--text-15); line-height: var(--leading-relaxed); color: var(--text-primary); }
+.bubble-ai code { font-family: var(--font-mono); font-size: var(--text-13); background: var(--surface-chip); padding: 2px 6px; border-radius: var(--radius-xs); }
+
+.tool-card {
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-chip); padding: var(--space-2) var(--space-3);
+  font-size: var(--text-13); display: flex; gap: var(--space-2); align-items: center;
+}
+.tool-card .dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--success); flex: none; }
+.tool-card .dot.err { background: var(--danger); }
+.tool-card .tn { font-family: var(--font-mono); color: var(--text-primary); }
+.tool-card .cm { font-family: var(--font-mono); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-card.out { font-family: var(--font-mono); font-size: var(--text-12); color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; display: block; padding-left: calc(6px + var(--space-2)); }
+
+.approve {
+  border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  background: var(--surface-elevated); padding: var(--space-4);
+  box-shadow: var(--shadow-md);
+}
+.approve .t { font-size: var(--text-14); font-weight: var(--font-medium); margin-bottom: var(--space-2); }
+.approve .d { font-family: var(--font-mono); font-size: var(--text-12); color: var(--text-tertiary); background: var(--surface-sunken); padding: var(--space-2); border-radius: var(--radius-sm); margin-bottom: var(--space-3); word-break: break-all; }
+.row { display: flex; gap: var(--space-2); justify-content: flex-end; }
+
+.btn {
+  font: inherit; font-size: var(--text-13); font-weight: var(--font-medium);
+  padding: var(--space-2) var(--space-4); border-radius: var(--radius-md);
+  border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+  cursor: pointer; transition: background var(--motion-fast) var(--ease-out);
+}
+.btn:hover { background: var(--surface-hover); }
+.btn-primary { background: var(--ink); color: var(--text-inverse); border-color: transparent; }
+.btn-primary:hover { background: var(--ink-hover); }
+.btn-danger { color: var(--danger); }
+
+.composer {
+  display: flex; align-items: flex-end; gap: var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius-xl);
+  background: var(--surface-elevated); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+.composer:focus-within { border-color: var(--border-focus); }
+.composer input {
+  flex: 1; border: 0; outline: 0; background: transparent; font: inherit;
+  font-size: var(--text-15); line-height: 1.467; color: var(--text-primary);
+  padding: var(--space-2) 0; min-width: 0;
+}
+.composer input::placeholder { color: var(--text-placeholder); }
+.send {
+  width: 32px; height: 32px; flex: none; border-radius: var(--radius-full);
+  border: 0; background: var(--ink); color: var(--text-inverse);
+  display: grid; place-items: center; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.send:hover { background: var(--ink-hover); }
+
+.sidebar-item {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  font-size: var(--text-14); color: var(--text-secondary); cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.sidebar-item:hover { background: var(--surface-hover); color: var(--text-primary); }
+.sidebar-item.active { background: var(--surface-active); color: var(--text-primary); font-weight: var(--font-medium); }
+
+.badge { font-size: var(--text-11); padding: 2px 8px; border-radius: var(--radius-full); background: var(--brand-soft); color: var(--brand); font-weight: var(--font-medium); }
+.badge.warn { background: var(--warning-soft); color: var(--warning); }
+.badge.err { background: var(--danger-soft); color: var(--danger); }
+.badge.ok { background: var(--success-soft); color: var(--success); }
+
+.foot { margin-top: var(--space-8); font-size: var(--text-12); color: var(--text-tertiary); line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Design Tokens</h1>
+    <span class="meta">v1 · 单文件</span>
+    <button class="toggle" id="tg">切换主题</button>
+  </header>
+
+  <h2>颜色 · 基底与文字</h2>
+  <div class="swatches" id="sw-base"></div>
+
+  <h2>颜色 · 主色与状态</h2>
+  <div class="swatches" id="sw-state"></div>
+
+  <h2>排版</h2>
+  <div class="card">
+    <div class="spec"><span class="k">text-12</span><span class="v" style="font-size:var(--text-12);line-height:var(--text-12-lh)">辅助说明与标签 Auxiliary</span></div>
+    <div class="spec"><span class="k">text-13</span><span class="v" style="font-size:var(--text-13);line-height:var(--text-13-lh)">按钮与表格正文</span></div>
+    <div class="spec"><span class="k">text-14</span><span class="v" style="font-size:var(--text-14);line-height:var(--text-14-lh)">UI 默认字号（侧边栏、设置项）</span></div>
+    <div class="spec"><span class="k">text-15</span><span class="v" style="font-size:var(--text-15);line-height:1.6">对话正文，比 UI 大一档，是刻意的</span></div>
+    <div class="spec"><span class="k">text-16</span><span class="v" style="font-size:var(--text-16);line-height:var(--text-16-lh)">强调段落</span></div>
+    <div class="spec"><span class="k">text-18</span><span class="v" style="font-size:var(--text-18);line-height:var(--text-18-lh)">区块标题</span></div>
+    <div class="spec"><span class="k">text-20</span><span class="v" style="font-size:var(--text-20);line-height:var(--text-20-lh)">页面标题</span></div>
+    <div class="spec"><span class="k">text-24</span><span class="v" style="font-size:var(--text-24);line-height:var(--text-24-lh);font-weight:var(--font-semibold)">大标题</span></div>
+    <div class="spec"><span class="k">mono</span><span class="v" style="font-family:var(--font-mono);font-size:var(--text-13)">const tokens = {} // 代码</span></div>
+  </div>
+
+  <h2>间距（4px 基准）</h2>
+  <div class="card bars" id="bars"></div>
+
+  <h2>圆角</h2>
+  <div class="card radii">
+    <div style="border-radius:var(--radius-xs)">xs 4</div>
+    <div style="border-radius:var(--radius-sm)">sm 6</div>
+    <div style="border-radius:var(--radius-md)">md 8</div>
+    <div style="border-radius:var(--radius-lg)">lg 12</div>
+    <div style="border-radius:var(--radius-xl)">xl 16</div>
+    <div style="border-radius:var(--radius-2xl)">2xl 24</div>
+  </div>
+
+  <h2>动效（悬停试试）</h2>
+  <div class="card motion-row">
+    <div class="motion-demo" style="transition-duration:var(--motion-fast)">fast 150ms</div>
+    <div class="motion-demo" style="transition-duration:var(--motion-base)">base 200ms</div>
+    <div class="motion-demo" style="transition-duration:var(--motion-enter)">enter 250ms</div>
+  </div>
+
+  <h2>组件样例 · 对话</h2>
+  <div class="card demo">
+    <div class="bubble-user">帮我看下 workspace 里有什么文件</div>
+    <div class="tool-card"><span class="dot"></span><span class="tn">bash</span><span class="cm">ls -la</span></div>
+    <div class="tool-card out">total 8
+drwxr-xr-x  hello.txt</div>
+    <div class="tool-card"><span class="dot err"></span><span class="tn">powershell</span><span class="cm">ver</span></div>
+    <div class="bubble-ai">目录里只有一个 <code>hello.txt</code>。另外 <code>ver</code> 在 PowerShell 下不存在，要用 <code>cmd /c ver</code>。</div>
+  </div>
+
+  <h2>组件样例 · 审批卡</h2>
+  <div class="approve">
+    <div class="t">允许执行 bash 命令？</div>
+    <div class="d">echo "hi" &gt; hello.txt</div>
+    <div class="row">
+      <button class="btn btn-danger">拒绝</button>
+      <button class="btn btn-primary">允许，本次</button>
+    </div>
+  </div>
+
+  <h2>组件样例 · 输入与列表</h2>
+  <div class="card demo">
+    <div class="composer">
+      <input placeholder="问点什么…">
+      <button class="send" aria-label="发送">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </div>
+    <div>
+      <div class="sidebar-item active"><span>新会话</span><span class="badge" style="margin-left:auto">进行中</span></div>
+      <div class="sidebar-item"><span>重构数据层</span></div>
+      <div class="sidebar-item"><span>排查构建失败</span><span class="badge err" style="margin-left:auto">失败</span></div>
+      <div class="sidebar-item"><span>写设计文档</span><span class="badge warn" style="margin-left:auto">中断</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    单一来源是 <code>tokens.css</code>，本页由构建脚本注入生成，不要直接改这里。<br>
+    所有颜色/字号均可通过覆盖 <code>:root</code> 变量整体替换。
+  </div>
+</div>
+
+<script>
+/* 色板数据：从实际 CSS 变量读取，改 tokens.css 这里自动跟着变 */
+function readVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const BASE = [
+  ['--bg', 'bg'],
+  ['--surface', 'surface'],
+  ['--surface-elevated', 'surface-elevated'],
+  ['--surface-sunken', 'surface-sunken'],
+  ['--border', 'border'],
+  ['--text-primary', 'text-primary'],
+  ['--text-secondary', 'text-secondary'],
+  ['--text-tertiary', 'text-tertiary'],
+  ['--text-placeholder', 'text-placeholder'],
+];
+
+const STATE = [
+  ['--ink', 'ink (CTA)'],
+  ['--brand', 'brand'],
+  ['--brand-soft', 'brand-soft'],
+  ['--danger', 'danger'],
+  ['--warning', 'warning'],
+  ['--success', 'success'],
+  ['--info', 'info'],
+];
+
+function paint() {
+  for (const [id, list] of [['sw-base', BASE], ['sw-state', STATE]]) {
+    const host = document.getElementById(id);
+    host.innerHTML = list.map(([v, label]) => {
+      const val = readVar(v);
+      return `<div class="sw">
+        <div class="chip" style="background:var(${v})"></div>
+        <div class="lab"><div class="name">${label}</div><div class="hex">${val || '—'}</div></div>
+      </div>`;
+    }).join('');
+  }
+
+  const bars = document.getElementById('bars');
+  bars.innerHTML = ['1', '2', '3', '4', '5', '6', '8', '10', '12'].map((n) => {
+    const px = parseInt(n, 10) * 4;
+    return `<div class="bar-row"><span class="k">space-${n}</span>
+      <span class="bar" style="width:${px}px"></span>
+      <span class="k" style="width:auto">${px}px</span></div>`;
+  }).join('');
+}
+
+document.getElementById('tg').addEventListener('click', () => {
+  const dark = document.documentElement.classList.toggle('dark');
+  try { localStorage.setItem('preview-theme', dark ? 'dark' : 'light'); } catch {}
+  paint();
+});
+
+try {
+  if (localStorage.getItem('preview-theme') === 'dark') document.documentElement.classList.add('dark');
+} catch {}
+
+paint();
+</script>
+</body>
+</html>

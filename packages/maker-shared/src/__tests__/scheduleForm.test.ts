@@ -1,0 +1,725 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  applyMobileTemplateParams,
+  applyScheduleWireCompat,
+  ScheduleModelSelectionUnsupportedError,
+  SchedulePreRunHookUnsupportedError,
+  applyTemplateToMobileScheduleDraft,
+  buildMobileScheduleInput,
+  createMobileScheduleDraft,
+  createTemplateParamDefaults,
+  deriveMobileScheduleSessionMode,
+  MOBILE_SCHEDULE_PENDING_SESSION_ID,
+  resolveMobileScheduleBinding,
+  updateDraftAgentKind,
+  updateDraftBoundSessionId,
+  updateDraftCronExpr,
+  updateDraftIntervalMinutes,
+  updateDraftRunMode,
+  updateDraftSessionMode,
+  updateDraftTimezone,
+  validateTemplateParamValues,
+  validateMobileScheduleDraft,
+} from '../scheduleForm.js';
+import type { RemoteSchedule, RemoteScheduleTemplate } from '../scheduleTypes.js';
+
+function schedule(patch: Partial<RemoteSchedule> = {}): RemoteSchedule {
+  return {
+    id: 'sched-1',
+    name: '桌面巡检',
+    prompt: '检查项目状态',
+    kind: 'cron',
+    cronExpr: '0 9 * * *',
+    timezone: 'Asia/Shanghai',
+    recurring: true,
+    manual: false,
+    agentKind: 'claude-code',
+    workspaceKind: 'project',
+    workingDir: '/repo/xdt-maker',
+    useWorktree: false,
+    persistentSession: false,
+    notify: { desktop: true, feishu: false },
+    status: 'active',
+    ...patch,
+  };
+}
+
+describe('mobile schedule form model', () => {
+  // PR #6830, unit: apply/serialize is the shared production entry point. Existing
+  // template cases had no remote location and missed an unchanged route becoming local.
+  it('preserves the shared route when a template keeps the same Harness', () => {
+    const route = { agentKind: 'claude-code' as const, modelAgentKind: 'claude-code' as const,
+      model: 'remote-model', providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner' };
+    const draft = createMobileScheduleDraft(schedule(route));
+    const selected = applyTemplateToMobileScheduleDraft(draft, { id: 'same', name: 'Same Harness',
+      description: '', category: 'custom', source: 'user', agentKind: route.agentKind });
+    expect(JSON.parse(JSON.stringify(buildMobileScheduleInput(selected)))).toMatchObject(route);
+  });
+
+  it.each([
+    { model: 'local-model' },
+    { providerId: 'local-provider' },
+  ])('does not inherit shared fields into a partial local template %j', (override) => {
+    const draft = createMobileScheduleDraft(schedule({ modelAgentKind: 'claude-code',
+      model: 'remote-model', providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner' }));
+    const selected = applyTemplateToMobileScheduleDraft(draft, { id: 'local', name: 'Local route',
+      description: '', category: 'custom', source: 'user', ...override });
+    expect(selected).toMatchObject({ ...override, modelAgentDeviceId: '' });
+    expect(selected.model).not.toBe('remote-model');
+    expect(selected.providerId).not.toBe('remote-provider');
+  });
+
+  it('builds a desktop-compatible create input for recurring project schedules', () => {
+    const draft = createMobileScheduleDraft(null, { fallbackWorkingDir: '/repo/xdt-maker' });
+    const input = buildMobileScheduleInput({
+      ...draft,
+      name: '移动端巡检',
+      prompt: '每天检查 PR 状态',
+      intervalMinutes: '15',
+      effort: 'medium',
+    });
+
+    expect(input).toMatchObject({
+      name: '移动端巡检',
+      prompt: '每天检查 PR 状态',
+      kind: 'cron',
+      cronExpr: '*/15 * * * *',
+      timezone: 'Asia/Shanghai',
+      recurring: true,
+      manual: false,
+      intervalMs: 900_000,
+      agentKind: 'claude-code',
+      workspaceKind: 'project',
+      workingDir: '/repo/xdt-maker',
+      useWorktree: false,
+      effort: 'medium',
+      notify: { desktop: true, feishu: false },
+    });
+  });
+
+  it('preserves hidden desktop-only schedule semantics when editing', () => {
+    const draft = createMobileScheduleDraft(schedule({
+      targetSessionId: 'session-1',
+      persistentSession: true,
+      silentWhenIdle: true,
+      intervalMs: 3_600_000,
+      notify: { desktop: false, feishu: true },
+    }));
+    const input = buildMobileScheduleInput({ ...draft, name: '更新后的巡检' });
+
+    expect(draft.intervalMinutes).toBe('60');
+    expect(input).toMatchObject({
+      name: '更新后的巡检',
+      targetSessionId: 'session-1',
+      persistentSession: true,
+      silentWhenIdle: true,
+      notify: { desktop: false, feishu: true },
+    });
+  });
+
+  it('clears intervalMs with a serializable null that survives the JSON wire', () => {
+    const edited = createMobileScheduleDraft(schedule({ intervalMs: 900_000 }));
+
+    // 清空必须走编辑入口(标记 touched)——未触碰的空值是「表达不了」不是「清空」。
+    const cleared = buildMobileScheduleInput(updateDraftIntervalMinutes(edited, ''));
+    expect(cleared.intervalMs).toBeNull();
+
+    const manual = buildMobileScheduleInput({ ...edited, runMode: 'manual', intervalMinutes: '' });
+    expect(manual.intervalMs).toBeNull();
+
+    // device-link 经 JSON.stringify 传输:undefined 的 key 会被丢掉(= 桌面端
+    // 视为「不修改」),清空语义必须以 null 原样过线,由桌面接收端归一化。
+    const wire = JSON.parse(JSON.stringify(cleared)) as Record<string, unknown>;
+    expect(hasOwn(wire, 'intervalMs')).toBe(true);
+    expect(wire.intervalMs).toBeNull();
+
+    const kept = buildMobileScheduleInput({ ...edited, intervalMinutes: '15' });
+    expect(kept.intervalMs).toBe(15 * 60_000);
+  });
+
+  it('downgrades the null clear to key omission for hosts without the capability', () => {
+    const edited = createMobileScheduleDraft(schedule({ intervalMs: 900_000 }));
+    const cleared = buildMobileScheduleInput(updateDraftIntervalMinutes(edited, ''));
+
+    // 旧 desktop:null 会被旧引擎当成已设间隔立即触发;省略 key 让旧引擎的
+    // 隐式清空(带 cronExpr 不带 intervalMs)承担等价语义。
+    const legacy = applyScheduleWireCompat(cleared, { supportsIntervalNullClear: false });
+    expect(hasOwn(legacy, 'intervalMs')).toBe(false);
+    expect(legacy.cronExpr).toBe(cleared.cronExpr);
+
+    // 新 desktop:null 原样过线,由 IPC 入口归一化。
+    expect(applyScheduleWireCompat(cleared, { supportsIntervalNullClear: true })).toBe(cleared);
+
+    // 数值间隔与能力无关,两种 host 都原样透传。
+    const kept = buildMobileScheduleInput({ ...edited, intervalMinutes: '15' });
+    expect(applyScheduleWireCompat(kept, { supportsIntervalNullClear: false })).toBe(kept);
+  });
+
+  it('preserves a form-inexpressible interval unless the user explicitly touches it', () => {
+    // 90 分钟表单表达不了(非 1-59 分钟/整点小时),intervalMinutes 折叠成 ''
+    const draft = createMobileScheduleDraft(schedule({ intervalMs: 90 * 60_000 }));
+    expect(draft.intervalMinutes).toBe('');
+    expect(draft.sourceIntervalMs).toBe(90 * 60_000);
+
+    const nonMinuteDraft = createMobileScheduleDraft(schedule({ intervalMs: 7.5 * 60_000 }));
+    expect(nonMinuteDraft.intervalMinutes).toBe('');
+    expect(nonMinuteDraft.sourceIntervalMs).toBe(7.5 * 60_000);
+
+    // 只改 prompt:间隔原值回传,不因「表单显示不了」被顺手清空
+    const untouched = buildMobileScheduleInput({ ...draft, prompt: 'new prompt' });
+    expect(untouched.intervalMs).toBe(90 * 60_000);
+
+    // 用户经编辑入口清空 → 明确清空
+    const clearedDraft = updateDraftIntervalMinutes(draft, '');
+    expect(clearedDraft.intervalMinutesTouched).toBe(true);
+    const cleared = buildMobileScheduleInput(clearedDraft);
+    expect(cleared.intervalMs).toBeNull();
+
+    // 切 manual 是显式 cadence 操作:切回 recurring 也不复活旧间隔
+    const manualRoundTrip = updateDraftRunMode(updateDraftRunMode(draft, 'manual'), 'recurring');
+    expect(buildMobileScheduleInput(manualRoundTrip).intervalMs).toBeNull();
+
+    // 编辑可见 cron / 时区同样是显式 cadence 操作:隐藏 interval 不得继续权威,
+    // 否则用户刚改的排期完全不生效(codex review 发现)。
+    const cronEdited = buildMobileScheduleInput(updateDraftCronExpr(draft, '30 8 * * *'));
+    expect(cronEdited.intervalMs).toBeNull();
+    expect(cronEdited.cronExpr).toBe('30 8 * * *');
+    expect(
+      buildMobileScheduleInput(updateDraftTimezone(draft, 'America/New_York')).intervalMs,
+    ).toBeNull();
+  });
+
+  it.each([90_000, 84_000])('preserves a sub-minute interval when only other fields are edited: %sms', (intervalMs) => {
+    const draft = createMobileScheduleDraft(schedule({ intervalMs }));
+    expect(draft.intervalMinutes).toBe('');
+    expect(draft.sourceIntervalMs).toBe(intervalMs);
+
+    // 非整分钟间隔即使四舍五入后受支持，也不能被表单伪装成可编辑分钟。
+    const untouched = buildMobileScheduleInput({ ...draft, prompt: 'new prompt' });
+    expect(untouched.intervalMs).toBe(intervalMs);
+  });
+
+  it('writes an explicit false when mobile disables WeCom group notifications', () => {
+    const draft = createMobileScheduleDraft(schedule({
+      notify: { desktop: true, feishu: false, wecomGroup: true },
+    }));
+    const input = buildMobileScheduleInput({ ...draft, notifyWecomGroup: false });
+
+    expect(input.notify).toEqual({
+      desktop: true,
+      feishu: false,
+      wecomGroup: false,
+    });
+  });
+
+  it('matches desktop heartbeat update semantics for bound sessions', () => {
+    const draft = createMobileScheduleDraft(schedule({
+      agentKind: 'codex',
+      model: '',
+      effort: '',
+      fastMode: true,
+      targetSessionId: 'session-1',
+      persistentSession: false,
+      useWorktree: true,
+    }));
+    const input = buildMobileScheduleInput(draft);
+
+    expect(input.targetSessionId).toBe('session-1');
+    expect(input.useWorktree).toBe(false);
+    expect(hasOwn(input, 'workingDir')).toBe(false);
+    expect(hasOwn(input, 'model')).toBe(true);
+    expect(hasOwn(input, 'effort')).toBe(true);
+    expect(input.model).toBeUndefined();
+    expect(input.effort).toBeUndefined();
+    expect(hasOwn(input, 'fastMode')).toBe(false);
+  });
+
+  it('derives and switches fresh / persistent / bound session modes', () => {
+    const draft = {
+      ...createMobileScheduleDraft(null),
+      name: 'Bound',
+      prompt: 'run',
+      workspaceKind: 'project' as const,
+      workingDir: '/repo/xdt-maker',
+      useWorktree: true,
+    };
+
+    expect(deriveMobileScheduleSessionMode(draft)).toBe('fresh');
+
+    const pending = updateDraftSessionMode(draft, 'bound');
+    expect(deriveMobileScheduleSessionMode(pending)).toBe('bound');
+    expect(pending).toMatchObject({
+      persistentSession: false,
+      targetSessionId: MOBILE_SCHEDULE_PENDING_SESSION_ID,
+      useWorktree: false,
+    });
+    expect(validateMobileScheduleDraft(pending)).toMatchObject({ field: 'targetSessionId' });
+
+    const selected = updateDraftBoundSessionId({ ...pending, useWorktree: true }, 'session-1');
+    expect(selected).toMatchObject({
+      persistentSession: false,
+      targetSessionId: 'session-1',
+      useWorktree: false,
+    });
+    expect(validateMobileScheduleDraft(selected)).toBeNull();
+
+    const persistent = updateDraftSessionMode(selected, 'persistent');
+    expect(deriveMobileScheduleSessionMode(persistent)).toBe('persistent');
+    expect(persistent).toMatchObject({
+      persistentSession: true,
+      targetSessionId: 'session-1',
+    });
+
+    const fresh = updateDraftSessionMode(persistent, 'fresh');
+    expect(deriveMobileScheduleSessionMode(fresh)).toBe('fresh');
+    expect(fresh).toMatchObject({
+      persistentSession: false,
+      targetSessionId: '',
+    });
+  });
+
+  it('keeps codex fast mode explicit and clears it when switching back to Claude', () => {
+    const draft = updateDraftAgentKind(createMobileScheduleDraft(null), 'codex');
+    // 不写死默认模型:留空交给运行电脑按新建任务口径解析,序列化时省略。
+    expect(draft.model).toBe('');
+    const input = buildMobileScheduleInput({ ...draft, name: 'Codex', prompt: 'run', fastMode: true });
+    expect(input).toMatchObject({ agentKind: 'codex', fastMode: true });
+    expect(input).not.toHaveProperty('model');
+
+    const claude = updateDraftAgentKind({ ...draft, fastMode: true }, 'claude-code');
+    expect(buildMobileScheduleInput({ ...claude, name: 'Claude', prompt: 'run' })).not.toHaveProperty('fastMode');
+  });
+
+  it('supports Pi automations: blank default model (host-resolved) and explicit fast mode', () => {
+    // Pi 模型来自动态 BYOM 目录:切到 Pi 时 model 留空 → 序列化省略 → host 解析默认。
+    const draft = updateDraftAgentKind(createMobileScheduleDraft(null), 'pi');
+    expect(draft.model).toBe('');
+    const input = buildMobileScheduleInput({ ...draft, name: 'Pi task', prompt: 'run', fastMode: true });
+    expect(input).toMatchObject({ agentKind: 'pi', fastMode: true });
+    // 空模型不写入(host 解析默认),而非发一个空串把默认覆盖掉。
+    expect(hasOwn(input, 'model')).toBe(false);
+
+    // 用户在自由文本框显式指定 Pi 模型时照常带上。
+    const withModel = buildMobileScheduleInput({ ...draft, name: 'Pi task', prompt: 'run', model: 'my-local-model' });
+    expect(withModel).toMatchObject({ agentKind: 'pi', model: 'my-local-model' });
+  });
+
+  it('keeps an explicit Pi provider route through edit, templates, and fresh-task serialization', () => {
+    const existing = schedule({
+      agentKind: 'pi',
+      model: '',
+      providerId: 'byom-local',
+    });
+    const edited = createMobileScheduleDraft(existing);
+    expect(edited.providerId).toBe('byom-local');
+    expect(buildMobileScheduleInput({ ...edited, name: 'Pi task', prompt: 'run' }))
+      .toMatchObject({ agentKind: 'pi', providerId: 'byom-local' });
+
+    const template: RemoteScheduleTemplate = {
+      id: 'pi-local',
+      name: 'Pi local',
+      description: 'Use the connected local Pi provider',
+      category: 'developer-tools',
+      source: 'builtin',
+      agentKind: 'pi',
+      providerId: 'byom-template',
+      prompt: 'run',
+    };
+    const fromTemplate = applyTemplateToMobileScheduleDraft(createMobileScheduleDraft(null), template);
+    expect(fromTemplate.providerId).toBe('byom-template');
+    expect(buildMobileScheduleInput({ ...fromTemplate, name: 'Pi template' }))
+      .toMatchObject({ agentKind: 'pi', providerId: 'byom-template' });
+
+    // 切 agent 不得把前一个来源误带到新的 agent 默认路由。
+    expect(updateDraftAgentKind({ ...edited, providerId: 'byom-local' }, 'codex').providerId).toBe('');
+  });
+
+  it('validates required fields and supported interval-style cron presets', () => {
+    const draft = createMobileScheduleDraft(null);
+    expect(validateMobileScheduleDraft(draft)).toMatchObject({ field: 'name' });
+    expect(validateMobileScheduleDraft({
+      ...draft,
+      name: 'Bad',
+      prompt: 'run',
+      intervalMinutes: '90',
+    })).toMatchObject({
+      field: 'intervalMinutes',
+    });
+    for (const intervalMinutes of ['7', '28', '59']) {
+      expect(validateMobileScheduleDraft({
+        ...draft,
+        name: 'Bad',
+        prompt: 'run',
+        intervalMinutes,
+      })).toMatchObject({ field: 'intervalMinutes' });
+    }
+    expect(validateMobileScheduleDraft({
+      ...draft,
+      name: 'Manual',
+      prompt: 'run',
+      runMode: 'manual',
+      intervalMinutes: '90',
+    })).toBeNull();
+  });
+
+  it('does not block editing a script-only desktop schedule on an empty prompt (codex review 966)', () => {
+    // 桌面端"仅运行脚本"任务(见 docs/dev-rules/remote-and-mobile-adaptation.md)prompt 合法为空——mobile
+    // 没有编辑 scriptConfig 的 UI,不该拿桌面端才有意义的字段挡住 mobile 打开/
+    // 保存这类任务的其它字段(改名、通知开关等)。
+    const draft = createMobileScheduleDraft(schedule({
+      prompt: undefined,
+      executionMode: 'script',
+    }));
+
+    expect(draft.executionMode).toBe('script');
+    expect(validateMobileScheduleDraft(draft)).toBeNull();
+    // executionMode 只读,不回写进 write input——引擎侧 patch 合并时缺这个 key
+    // 才会保留原有值,若这里显式带上反而有被误改成别的值的风险。
+    expect(hasOwn(buildMobileScheduleInput({ ...draft, name: '更新后的脚本任务' }), 'executionMode'))
+      .toBe(false);
+  });
+
+  it('pins agent-only fields back to script-safe values when serializing a script draft (codex review 966 second pass)', () => {
+    // 表单残留或误操作把 draft 拨到 script 非法组合(worktree/持续会话/
+    // dialogue 工作区/静默)时,序列化层必须钉回合法值——否则引擎合并态校验
+    // 直接拒绝整个 patch,一个可见控件就能让保存失败。
+    const draft = {
+      ...createMobileScheduleDraft(schedule({ prompt: undefined, executionMode: 'script' })),
+      workspaceKind: 'dialogue' as const,
+      useWorktree: true,
+      persistentSession: true,
+      targetSessionId: 'sess-oops',
+      silentWhenIdle: true,
+    };
+    const input = buildMobileScheduleInput(draft);
+
+    expect(input).toMatchObject({
+      workspaceKind: 'project',
+      workingDir: '/repo/xdt-maker',
+      useWorktree: false,
+      persistentSession: false,
+      silentWhenIdle: false,
+    });
+    expect(input.targetSessionId).toBe('sess-oops');
+  });
+
+  // Unit regression: mobile edits must retain the complete unsupported route
+  // for host validation, instead of dropping only its remote location.
+  it.each([
+    { modelAgentDeviceId: 'shared:owner', effort: 'xhigh', fastMode: 'ultrafast' as const },
+    { modelAgentDeviceId: '', effort: 'low', fastMode: true },
+    { modelAgentDeviceId: '', effort: '', fastMode: false },
+  ])('preserves complete script routes across mobile edits (%j)', (choice) => {
+    const remote = {
+      modelAgentKind: 'codex' as const,
+      modelAgentDeviceId: 'shared:owner',
+      model: 'same-model',
+      providerId: 'openai',
+      effort: 'xhigh' as const,
+      fastMode: 'ultrafast' as const,
+    };
+    const draft = createMobileScheduleDraft(schedule({ executionMode: 'script', ...remote }));
+    const selected = { ...remote, ...choice,
+      ...(!choice.modelAgentDeviceId ? { model: 'local-model', providerId: 'local-provider' } : {}) };
+    // Empty effort and false Fast must survive JSON transport to clear old values.
+    const wire = JSON.parse(JSON.stringify(buildMobileScheduleInput({ ...draft, ...selected, name: 'Renamed' })));
+    expect({ ...remote, ...wire }).toMatchObject(selected);
+  });
+
+  it('still requires a prompt for a regular agent-mode schedule', () => {
+    const draft = createMobileScheduleDraft(schedule({ prompt: '' }));
+    expect(validateMobileScheduleDraft(draft)).toMatchObject({ field: 'prompt' });
+  });
+
+  it('does not require a project path when editing a bound desktop schedule', () => {
+    const draft = createMobileScheduleDraft(schedule({
+      workingDir: '',
+      targetSessionId: 'session-1',
+    }));
+
+    expect(validateMobileScheduleDraft(draft)).toBeNull();
+  });
+
+  it('applies schedule templates using the desktop parameter semantics', () => {
+    const template: RemoteScheduleTemplate = {
+      id: 'daily',
+      name: 'Daily Report',
+      description: 'Daily status',
+      category: 'status-reports',
+      source: 'builtin',
+      prompt: 'Summarize {{project}} with {{scope}}',
+      cronExpr: '0 9 * * *',
+      timezone: 'Asia/Shanghai',
+      recurring: true,
+      agentKind: 'codex',
+      model: 'gpt-5.5',
+      fastMode: true,
+      notify: { desktop: true, feishu: false },
+      parameters: [
+        { key: 'project', label: 'Project', type: 'string', required: true, default: 'XDMaker' },
+        { key: 'scope', label: 'Scope', type: 'string', required: false, default: 'today' },
+      ],
+    };
+    const defaults = createTemplateParamDefaults(template);
+    const draft = applyTemplateToMobileScheduleDraft(createMobileScheduleDraft(null), template, defaults);
+
+    expect(defaults).toEqual({ project: 'XDMaker', scope: 'today' });
+    expect(draft).toMatchObject({
+      name: 'Daily Report',
+      prompt: 'Summarize XDMaker with today',
+      agentKind: 'codex',
+      model: 'gpt-5.5',
+      fastMode: true,
+    });
+    expect(applyMobileTemplateParams(template.prompt!, { project: 'Mobile', scope: 'week' }, template.parameters))
+      .toBe('Summarize Mobile with week');
+    expect(validateTemplateParamValues(template, { scope: 'today' })).toBeNull();
+  });
+
+  it('switches a worktree template draft into project workspace so useWorktree survives serialization', () => {
+    const template: RemoteScheduleTemplate = {
+      id: 'nightly-test-heal',
+      name: '夜间自愈测试',
+      description: 'Nightly test healing',
+      category: 'dev-automation',
+      source: 'builtin',
+      prompt: 'Run tests and fix failures',
+      cronExpr: '0 2 * * *',
+      timezone: 'Asia/Shanghai',
+      recurring: true,
+      agentKind: 'claude-code',
+      useWorktree: true,
+      notify: { desktop: true, feishu: false },
+    };
+    // 默认空 draft 是 dialogue workspace；不切 project 的话 useWorktree 会在
+    // buildMobileScheduleInput 里被静默打回 false（review #316 P1）。
+    const draft = applyTemplateToMobileScheduleDraft(createMobileScheduleDraft(null), template);
+
+    expect(draft.workspaceKind).toBe('project');
+    expect(draft.useWorktree).toBe(true);
+    expect(validateMobileScheduleDraft(draft)).toMatchObject({ field: 'workingDir' });
+    expect(buildMobileScheduleInput({ ...draft, workingDir: '/repo' }).useWorktree).toBe(true);
+
+    // 绑定会话的 draft 上应用 worktree 模板：绑定与 worktree 互斥，必须清掉
+    // targetSessionId，否则序列化的 heartbeat 分支同样会打回 false。
+    const boundDraft = updateDraftBoundSessionId(createMobileScheduleDraft(null), 'session-1');
+    const fromBound = applyTemplateToMobileScheduleDraft(boundDraft, template);
+    expect(fromBound.targetSessionId).toBe('');
+    expect(fromBound.useWorktree).toBe(true);
+    expect(buildMobileScheduleInput({ ...fromBound, workingDir: '/repo' }).useWorktree).toBe(true);
+  });
+
+  it('flags missing required template parameters without defaults', () => {
+    const template: RemoteScheduleTemplate = {
+      id: 'custom',
+      name: 'Custom',
+      description: 'Custom',
+      category: 'status-reports',
+      source: 'builtin',
+      parameters: [
+        { key: 'project', label: 'Project', type: 'string', required: true },
+      ],
+    };
+
+    expect(validateTemplateParamValues(template, {})).toMatchObject({
+      field: 'prompt',
+      message: '请输入模板参数：Project',
+      messageKey: 'devices.automations.presentation.validation.templateParameter',
+      messageValues: { label: 'Project' },
+      parameterKey: 'project',
+    });
+    expect(() => applyMobileTemplateParams('Run {{project}}', {}, template.parameters))
+      .toThrow('Missing required template parameter');
+  });
+});
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+
+describe('mobile explicit Harness round-trip', () => {
+  it.each(['cc', 'codex', 'pi'] as const)('records the selected target Harness (%s) while preserving its model override', (targetAgentKind) => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'codex', modelAgentKind: 'pi',
+      model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true, targetSessionId: 'old' }));
+    const selected = updateDraftBoundSessionId(draft, 'new', targetAgentKind);
+    const expectedAgentKind = targetAgentKind === 'cc' ? 'claude-code' : targetAgentKind;
+    expect(selected.boundAgent).toEqual({ sessionId: 'new', agentKind: expectedAgentKind });
+    expect(buildMobileScheduleInput(selected)).toMatchObject({ agentKind: expectedAgentKind,
+      modelAgentKind: 'pi', model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true });
+    expect(buildMobileScheduleInput({ ...selected, model: '', persistentSession: true })).toMatchObject({
+      agentKind: expectedAgentKind, targetSessionId: 'new', persistentSession: true,
+    });
+    expect(updateDraftBoundSessionId(selected, 'new', targetAgentKind)).toBe(selected);
+  });
+
+  it('resolves a manually entered target before serializing a persistent binding', async () => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'pi', modelAgentKind: 'pi',
+      model: 'pi-model', targetSessionId: 'old' }));
+    const changed = updateDraftSessionMode(updateDraftBoundSessionId(draft, 'new'), 'persistent');
+    expect(changed.boundAgent).toBeUndefined();
+    const getSession = vi.fn(async (id: string) => ({ id, agentKind: 'codex' as const }));
+    const resolved = await resolveMobileScheduleBinding(changed, getSession);
+    expect(getSession).toHaveBeenCalledExactlyOnceWith('new');
+    expect(buildMobileScheduleInput(resolved)).toMatchObject({ agentKind: 'codex', modelAgentKind: 'pi',
+      targetSessionId: 'new', persistentSession: true });
+    await expect(resolveMobileScheduleBinding(resolved, getSession)).resolves.toBe(resolved);
+    await expect(resolveMobileScheduleBinding(updateDraftSessionMode(changed, 'fresh'), getSession))
+      .resolves.toMatchObject({ targetSessionId: '' });
+    expect(getSession).toHaveBeenCalledTimes(1);
+    await expect(resolveMobileScheduleBinding(changed, async () => { throw new Error('offline'); }))
+      .rejects.toThrow('offline');
+  });
+
+  it.each(['bound', MOBILE_SCHEDULE_PENDING_SESSION_ID])('creates a Harness override when a legacy binding (%s) is explicitly switched', (targetSessionId) => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'claude-code', model: 'claude-sonnet-4-6',
+      targetSessionId, providerId: 'old-source', effort: 'high', fastMode: true }));
+    const selected = updateDraftAgentKind(draft, 'codex');
+    expect(selected.modelAgentKind).toBe('codex');
+    // 换 Harness 不写死模型,由用户在选择器里挑。
+    expect(selected.model).toBe('');
+    // Complete the pending picker before simulating the device-link JSON boundary.
+    const input = JSON.parse(JSON.stringify(buildMobileScheduleInput({ ...selected, model: 'gpt-6-astra',
+      targetSessionId: 'bound' })));
+    expect(input).toMatchObject({ targetSessionId: 'bound',
+      agentKind: targetSessionId === 'bound' ? 'claude-code' : 'codex', modelAgentKind: 'codex',
+      model: 'gpt-6-astra', providerId: '', effort: '', fastMode: false });
+    expect(draft.modelAgentKind).toBeUndefined();
+    expect(updateDraftAgentKind(draft, 'claude-code')).toBe(draft);
+  });
+
+  it('retains the explicit Pi choice while the user fills its dynamic model', () => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'codex', model: 'gpt-5.5', targetSessionId: 'bound' }));
+    const selected = updateDraftAgentKind(draft, 'pi');
+    expect(selected).toMatchObject({ modelAgentKind: 'pi', model: '' });
+    const input = JSON.parse(JSON.stringify(buildMobileScheduleInput({ ...selected, model: 'pi-model', providerId: 'pi-source' })));
+    expect(input).toMatchObject({ agentKind: 'codex', modelAgentKind: 'pi', model: 'pi-model', providerId: 'pi-source' });
+  });
+
+  it.each([false, true])('materializes a template model on a followed binding (worktree: %s)', (useWorktree) => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'codex', model: '', targetSessionId: 'bound' }));
+    const template: RemoteScheduleTemplate = { id: 'pi-template', name: 'Pi task', description: '', category: 'custom',
+      source: 'user', agentKind: 'pi', model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true, useWorktree };
+    const selected = applyTemplateToMobileScheduleDraft(draft, template);
+    const input = JSON.parse(JSON.stringify(buildMobileScheduleInput(selected)));
+    expect(input).toMatchObject({ agentKind: useWorktree ? 'pi' : 'codex', modelAgentKind: 'pi', model: 'pi-model',
+      providerId: 'pi-source', effort: 'high', fastMode: true, useWorktree });
+    if (useWorktree) expect(input).not.toHaveProperty('targetSessionId');
+    else expect(input.targetSessionId).toBe('bound');
+    expect(draft.modelAgentKind).toBeUndefined();
+  });
+
+  it('does not create a model override for an empty-model template or an untouched fresh Pi choice', () => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'codex', model: '', targetSessionId: 'bound' }));
+    const selected = applyTemplateToMobileScheduleDraft(draft, { id: 'follow', name: 'Follow', description: '', category: 'custom',
+      source: 'user', agentKind: 'pi', model: '' });
+    expect(buildMobileScheduleInput(selected)).not.toHaveProperty('modelAgentKind');
+    expect(buildMobileScheduleInput(updateDraftAgentKind(createMobileScheduleDraft(), 'pi'))).not.toHaveProperty('modelAgentKind');
+  });
+
+  it('displays and preserves the Desktop override through a JSON update', () => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'codex', modelAgentKind: 'pi',
+      model: 'shared-model', providerId: 'selected', effort: 'high', fastMode: true, targetSessionId: 'bound' }));
+    expect(draft.agentKind).toBe('pi');
+    const input = JSON.parse(JSON.stringify(buildMobileScheduleInput({ ...draft, name: 'Renamed' })));
+    expect(input).toMatchObject({ agentKind: 'codex', modelAgentKind: 'pi', model: 'shared-model',
+      providerId: 'selected', effort: 'high', fastMode: true, targetSessionId: 'bound' });
+    expect(input).not.toHaveProperty('boundAgent');
+    const reopened = createMobileScheduleDraft(schedule(input));
+    expect(buildMobileScheduleInput(reopened)).toMatchObject({ agentKind: 'codex', modelAgentKind: 'pi' });
+    expect(buildMobileScheduleInput(updateDraftSessionMode(reopened, 'fresh'))).toMatchObject({
+      agentKind: 'pi', modelAgentKind: 'pi', targetSessionId: undefined,
+    });
+    expect(buildMobileScheduleInput(updateDraftBoundSessionId(reopened, 'another-task'))).toMatchObject({
+      agentKind: 'pi', targetSessionId: 'another-task',
+    });
+  });
+  it('replaces a saved Pi marker and clears its provider when Mobile chooses Codex', () => {
+    const draft = createMobileScheduleDraft(schedule({ agentKind: 'codex', modelAgentKind: 'pi',
+      model: 'pi-model', providerId: 'pi-only', fastMode: true, targetSessionId: 'bound' }));
+    const selected = updateDraftAgentKind(draft, 'codex');
+    expect(selected).toMatchObject({ model: '', providerId: '', effort: '', fastMode: false });
+    const input = JSON.parse(JSON.stringify(buildMobileScheduleInput({ ...selected, model: 'gpt-6-astra' })));
+    expect(input).toMatchObject({ agentKind: 'codex', modelAgentKind: 'codex', model: 'gpt-6-astra',
+      providerId: '', effort: '', fastMode: false });
+  });
+  it('keeps older schedules without an override in follow mode', () => {
+    const draft = createMobileScheduleDraft(schedule({ targetSessionId: 'bound', model: '' }));
+    expect(buildMobileScheduleInput(draft)).not.toHaveProperty('modelAgentKind');
+  });
+});
+
+
+describe('mixed-version scheduled model selections', () => {
+  // Unit: JSON round trips retain the location; an old host must not accept
+  // a shared selection and silently create it with its own local credentials.
+  it.each(['', 'shared:owner'])('preserves location %j and requires peer support', (modelAgentDeviceId) => {
+    const draft = createMobileScheduleDraft(schedule({ modelAgentKind: 'pi', agentKind: 'pi',
+      model: 'remote-model', providerId: 'remote-provider', modelAgentDeviceId }));
+    const input = buildMobileScheduleInput(draft);
+    expect(JSON.parse(JSON.stringify(input)).modelAgentDeviceId).toBe(modelAgentDeviceId);
+    const compat = { supportsIntervalNullClear: true, supportsModelSelection: true };
+    expect(() => applyScheduleWireCompat(input, compat)).toThrow(ScheduleModelSelectionUnsupportedError);
+    expect(applyScheduleWireCompat(input, { ...compat, supportsAgentDeviceSelection: true })).toBe(input);
+    expect(buildMobileScheduleInput({ ...draft, model: '' }).modelAgentDeviceId).toBe('');
+  });
+  it.each([null, 600_000])('rejects an explicit bound selection on old/unknown hosts with interval %s', (intervalMs) => {
+    const input = { ...buildMobileScheduleInput(createMobileScheduleDraft(schedule())),
+      targetSessionId: 'bound', modelAgentKind: 'pi' as const, agentKind: 'pi' as const,
+      model: 'pi-model', providerId: 'pi-source', fastMode: true, intervalMs };
+    const saved = structuredClone(input);
+    expect(() => applyScheduleWireCompat(input, { supportsIntervalNullClear: true }))
+      .toThrow(ScheduleModelSelectionUnsupportedError);
+    expect(applyScheduleWireCompat(input, { supportsIntervalNullClear: true, supportsModelSelection: true })).toBe(input);
+    expect(input).toEqual(saved);
+  });
+
+  it('materializes fresh selections into legacy fields without losing model settings', () => {
+    const input = { ...buildMobileScheduleInput(createMobileScheduleDraft(schedule())),
+      targetSessionId: undefined, modelAgentKind: 'pi' as const, agentKind: 'codex' as const,
+      model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true, intervalMs: null };
+    const wire = JSON.parse(JSON.stringify(applyScheduleWireCompat(input, { supportsIntervalNullClear: false })));
+    expect(wire).toMatchObject({ agentKind: 'pi', model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true });
+    expect(wire).not.toHaveProperty('modelAgentKind');
+    expect(wire).not.toHaveProperty('intervalMs');
+  });
+
+  it('keeps legacy follow bindings editable on an old host', () => {
+    const input = { ...buildMobileScheduleInput(createMobileScheduleDraft(schedule())), targetSessionId: 'bound' };
+    expect(applyScheduleWireCompat(input, { supportsIntervalNullClear: true })).toBe(input);
+  });
+});
+
+
+it('round trips advanced check configuration without changing legacy quiet choices', () => {
+  expect(createMobileScheduleDraft(null).silentWhenIdle).toBe(false);
+  expect(createMobileScheduleDraft(schedule()).silentWhenIdle).toBe(false);
+  const hook = { command: 'node check.mjs', timeoutMs: 7000 };
+  const draft = createMobileScheduleDraft(schedule({ silentWhenIdle: false, preRunHook: hook }));
+  expect(buildMobileScheduleInput(draft)).toMatchObject({ silentWhenIdle: false, preRunHook: hook });
+  expect(buildMobileScheduleInput({ ...draft, preRunHook: null })).toHaveProperty('preRunHook', null);
+});
+
+it('requires a positive safe-integer timeout before saving a mobile pre-run check', () => {
+  const draft = createMobileScheduleDraft(schedule());
+  for (const timeoutMs of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(validateMobileScheduleDraft({ ...draft, preRunHook: { command: 'node check.mjs', timeoutMs } }))
+      .toMatchObject({ field: 'preRunHook', messageKey: 'devices.automations.presentation.validation.preRunHookTimeout' });
+  }
+  for (const timeoutMs of [undefined, 1, 7000]) {
+    expect(validateMobileScheduleDraft({ ...draft, preRunHook: { command: 'node check.mjs', timeoutMs } })).toBeNull();
+  }
+  expect(validateMobileScheduleDraft({ ...draft, preRunHook: null })).toBeNull();
+});
+
+it('rejects pre-run install and removal when an older host cannot persist either', () => {
+  const draft = createMobileScheduleDraft(schedule());
+  const base = buildMobileScheduleInput(draft);
+  const options = { supportsIntervalNullClear: true, supportsModelSelection: true };
+  expect(applyScheduleWireCompat(base, options)).toBe(base);
+  for (const preRunHook of [{ command: 'node check.mjs' }, null]) {
+    const input = { ...base, preRunHook };
+    expect(() => applyScheduleWireCompat(input, options)).toThrow(SchedulePreRunHookUnsupportedError);
+    expect(applyScheduleWireCompat(input, { ...options, supportsPreRunHook: true })).toBe(input);
+  }
+});

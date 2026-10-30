@@ -1,0 +1,25 @@
+# 运行时产物
+.data/
+.smoke-data/
+.appdata/
+.autotest/
+.packaged-test/
+.tmp/
+release/
+apps/desktop/.appdata/
+apps/desktop/.autotest/
+apps/desktop/.smoke-data/
+
+# 构建产物
+dist/
+dist-electron/
+dist/apps/
+*.tsbuildinfo
+*.log
+
+# 依赖
+node_modules/
+
+# 本地密钥
+.env
+.env.local

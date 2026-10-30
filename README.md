@@ -1,0 +1,160 @@
+# spike-host
+
+验证工程：只 vendor `@cindy/maker-core`，自己写宿主，这条路走不走得通。
+
+**结论：走得通。** 已完成三个阶段。
+
+| 阶段 | 内容 | 报告 |
+|---|---|---|
+| Phase 1 | 引擎接通（Pi 子进程 / RPC / 事件流） | [PHASE1-REPORT.md](./PHASE1-REPORT.md) |
+| Phase 2 | SQLite 持久化、中断恢复 | [PHASE2-REPORT.md](./PHASE2-REPORT.md) |
+| Phase 3 | Electron 外壳、IPC 边界、对话 UI | [PHASE3-REPORT.md](./PHASE3-REPORT.md) |
+| Phase 4 | 打包分发（NSIS）、中断续跑 | [PHASE4-REPORT.md](./PHASE4-REPORT.md) |
+
+---
+
+## 结构
+
+```
+spike-host/
+├── design/                    ← design tokens
+│   ├── tokens.css             唯一来源，93 个变量
+│   ├── preview.html           自包含预览（双主题）
+│   ├── preview.template.html  模板
+│   └── build-preview.mjs      注入脚本
+├── packages/
+│   ├── maker-core/            从 upstream 原样拷贝，零改动（Apache-2.0）
+│   ├── maker-shared/           39k 行 · 跨端展示契约
+│   ├── model-providers/        13k 行 · 供应商目录 + 路由
+│   ├── model-compat/             · 协议兼容
+│   └── host-core/             ← 宿主运行时（CLI 与桌面共用）
+│       └── host · recorder · approval · db/*
+└── apps/
+    ├── spike/                 ← CLI，验证引擎与数据层
+    │   ├── src/main.ts        跑一轮，全程落库
+    │   ├── src/selftest.ts    6 项数据层断言（不需 key）
+    │   ├── inspect.mjs        看库里有什么
+    │   └── simulate-crash.mjs 模拟进程中途被杀
+    └── desktop/               ← Electron 桌面端
+        ├── electron/main.ts      窗口 + IPC handler
+        ├── electron/preload.ts   contextBridge 白名单
+        ├── electron/hostRuntime.ts 宿主对象（不依赖 Electron）
+        ├── src/shared/ipc.ts     主/渲染唯一契约
+        ├── src/App.tsx           外壳：侧边栏 + 消息 + 输入 + 审批
+        ├── src/Chat.tsx          消息渲染 + 工具卡片
+        ├── src/devMock.ts        无 Electron 时的假宿主
+        └── src/styles/app.css    全部样式走 tokens
+```
+
+---
+
+## 快速开始
+
+```bash
+pnpm install
+
+# ---- 桌面端 ----
+cd apps/desktop
+node scripts/build.mjs       # 渲染层 + 主进程 + preload
+node scripts/launch.mjs      # 启动（需 APP_PI_API_KEY）
+node scripts/smoke.mjs       # 启动冒烟测试，自动清理
+node scripts/package.mjs     # 打包成免安装版 release/out/win-unpacked
+node scripts/package.mjs --installer   # 另外产出 NSIS 安装包
+
+# ---- 验中断续跑 ----
+node scripts/inject-interrupted.mjs .appdata/app.db   # 注入一条被杀掉的轮
+APP_AUTOTEST=resume node scripts/launch.mjs           # 自动点「继续」并截图
+
+# ---- 验权限记忆规则 ----
+APP_AUTOTEST=permission node scripts/launch.mjs       # 首次选「始终」，第二轮应免审批
+
+# ---- 验输入队列 ----
+APP_AUTOTEST=queue node scripts/launch.mjs            # 跑着时连发两条，应排队后依次发出
+
+# ---- 验上下文压缩 ----
+APP_AUTOTEST=compact node scripts/launch.mjs          # 小会话给 noop 提示；合成的边界应落库并渲染
+
+# ---- CLI（验证数据层，不需要 key）----
+cd apps/spike
+node build.mjs
+node dist/selftest.js        # 6/6
+```
+
+### 桌面端环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `APP_PI_API_KEY` | — | **必填**，模型 key |
+| `APP_MODEL` | `deepseek-v4.1-flash-1017` | 模型 id |
+| `APP_ENDPOINT` | `https://tokenhub.tencentmaas.com/v1` | 上游端点 |
+| `APP_API` | `openai-completions` | 协议 |
+| `APP_APPROVAL` | `ipc` | `ipc` = 弹审批卡；`allow` = 全放行 |
+| `APP_CONTEXT_WINDOW` | `200000` | 上下文窗口，用于 models.json 与压缩判定 |
+| `APP_COMPACT_PCT` | 由 pi 决定（约 90） | 自动压缩在窗口的百分之几处触发；值越小压得越早 |
+| `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
+| `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩 |
+
+> 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
+
+### CLI 环境变量（`apps/spike`）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SPIKE_PI_API_KEY` | — | 跑真实链路时必填 |
+| `SPIKE_ENDPOINT` | `https://api.anthropic.com` | 上游端点 |
+| `SPIKE_API` | `anthropic-messages` | 协议 |
+| `SPIKE_MODEL` | `claude-sonnet-4-5` | 模型 id |
+| `SPIKE_CONTEXT_WINDOW` | `200000` | 上下文窗口 |
+| `SPIKE_EFFORTS` | 空 | 逗号分隔；空 = 不支持 effort |
+| `SPIKE_APPROVAL` | `allow` | `allow` / `deny` / `ask` |
+| `SPIKE_DATA_DIR` | `%TEMP%/spike-host` | 数据根目录 |
+| `SPIKE_UPSTREAM_ROOT` | `C:/Users/chiaki/Desktop/agent/upstream/cindy` | 找 pi 二进制 |
+| `SPIKE_TIMEOUT_MS` | `180000` | 单轮超时 |
+
+---
+
+## 数据库
+
+5 张表：`sessions` / `messages` / `turns` / `usage_events` / `attachments`，
+外加 `schema_migrations`。迁移是内联 SQL 数组，打包成单文件后仍可迁移。
+
+三条最容易踩的：
+1. **运行态不进 `sessions.status`** —— 上游混用同一列，把运行中的会话误标成 archived
+2. **`client_id` 唯一索引** 保证消息幂等
+3. **同毫秒排序必须用 `rowid` 兜底**（自检抓到过真 bug）
+
+---
+
+## 已验证 / 未验证
+
+**已验证**
+- vendored maker-core 零改动可用（Pi 引擎）
+- 真实模型文本回复 + 工具调用（bash / powershell）
+- 审批通道、工具完整输出、token 用量落库
+- 消息幂等 / rewind / CAS / 软删 / 外键级联（6/6 自检）
+- 中断轮识别并带回续跑所需信息
+- Electron 进程启动、sandbox 隔离、IPC 白名单、pi 子进程拉起
+- 流式逐字输出（12 段 / 326ms，中间帧抓到半截）
+- 中断续跑：启动横幅 → 点继续 → 自动重跑 → 横幅归零
+- 会话标题自动生成（规则版，不吃模型往返）
+- 权限记忆规则（bash/ls 记住后第二轮 0 次弹窗）
+- 输入队列（跑着时连发两条，3 轮全 done，一问一答严格交替）
+- 上下文压缩：noop 良性提示 + 边界落库/渲染/重载后仍在
+- 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
+
+**未验证**
+- 安装包在干净机器上的安装流程（只在开发机跑了免安装版）
+- 让 pi 真正压缩成功（它对手动压缩有内置下限，小会话必定 noop；
+  而用真实 API 堆到那个量级不经济，目前只验到接线两端）
+- 输入队列持久化、FTS 搜索、附件 blob
+
+---
+
+## 注意
+
+`packages/*` 从 upstream **原样拷贝**，实测零改动可用。建议保持这个状态，方便 cherry-pick 上游修复。
+
+唯一需要适配的是 6 处 Vite 专有的 `?raw` 导入 —— 由各 `build.mjs` 的插件处理；正式产品用 Vite 则原生支持。
+
+品牌约束：Apache-2.0 只授权代码，`Cindy` 名称与 Logo 归 XD Inc.（见 `NOTICE`），fork 后必须换名和图标。`design/tokens.css` 已剔除全部品牌命名。

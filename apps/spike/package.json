@@ -1,0 +1,33 @@
+{
+  "name": "@spike/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs",
+    "start": "node build.mjs && node dist/main.js",
+    "selftest": "node build.mjs && node dist/selftest.js",
+    "inspect": "node inspect.mjs",
+    "simulate-crash": "node simulate-crash.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.292",
+    "@anthropic-ai/sdk": "^0.93.0",
+    "@cindy/maker-core": "workspace:*",
+    "@cindy/maker-shared": "workspace:*",
+    "@cindy/model-compat": "workspace:*",
+    "@cindy/model-providers": "workspace:*",
+    "@spike/host-core": "workspace:*",
+    "better-sqlite3": "^13.0.3",
+    "diff": "^8.0.4",
+    "gray-matter": "^4.0.3",
+    "parse5": "8.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,1040 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  splitQuestionReferences,
+  asyncQuestionNeedsSupplement,
+  formatAsyncQuestionSupplement,
+  buildAskQuestionProgressSummary,
+  buildAskQuestionReviewPresentation,
+  buildAskUserQuestionDecision,
+  buildIssueConfirmDecision,
+  buildIssueConfirmDecisionSummary,
+  buildIssueConfirmReviewPresentation,
+  buildInteractionResolveActionPresentation,
+  buildPendingInteractionQueuePresentation,
+  buildPermissionDecision,
+  buildPermissionDecisionSummary,
+  buildPermissionReviewPresentation,
+  buildPlanReviewDecision,
+  buildPlanReviewDecisionSummary,
+  buildPlanReviewEvidencePresentation,
+  buildPluginSetupCancelDecision,
+  buildRemotePluginSetupPresentation,
+  canStartInteractionResolve,
+  encodeMultiSelectAnswer,
+  extractPlanOutline,
+  describePermissionAction,
+  formatPermissionInput,
+  interactionBlocksRemoteComposer,
+  isFreeTextAskOptionLabel,
+  normalizeAskQuestions,
+  normalizeIssueConfirm,
+  pendingInteractionsBlockRemoteComposer,
+  permissionRiskSummary,
+  permissionTitle,
+  remoteInteractionHandling,
+  selectActivePendingInteraction,
+  selectionFromAnswer,
+  sessionScopedPermissionSuggestions,
+  sortPendingInteractions,
+  visibleAskOptions,
+  type PendingInteractionLike,
+} from '../interaction.js';
+
+describe('interaction shared model', () => {
+  // Unit regression: existing question presentation tests only covered prose.
+  // Bug: review questions hid the only way to open their evidence.
+  // exercise the shared presentation entry, including punctuation and unsafe links.
+  it('finds question evidence without consuming prose or unsupported link targets', () => {
+    expect(splitQuestionReferences('请查看 sidebar-layout-v1.html 或 https://example.com/view。再确认。')).toEqual([
+      { text: '请查看 ' },
+      { text: 'sidebar-layout-v1.html', href: 'sidebar-layout-v1.html' },
+      { text: ' 或 ' },
+      { text: 'https://example.com/view', href: 'https://example.com/view' },
+      { text: '。再确认。' },
+    ]);
+    expect(splitQuestionReferences('[查看原型](<docs/my prototype.html>) 与 `src/app.ts:42`')).toEqual([
+      { text: '查看原型', href: 'docs/my prototype.html' },
+      { text: ' 与 ' },
+      { text: 'src/app.ts:42', href: 'src/app.ts:42' },
+    ]);
+    expect(splitQuestionReferences('[坏链接](javascript:evil.html) data:evil.html')).toEqual([
+      { text: '[坏链接](javascript:evil.html) data:evil.html' },
+    ]);
+    expect(splitQuestionReferences('请查看 页面.html:42 和 docs/设计稿/index.html')).toEqual([
+      { text: '请查看 ' }, { text: '页面.html:42', href: '页面.html:42' },
+      { text: ' 和 ' }, { text: 'docs/设计稿/index.html', href: 'docs/设计稿/index.html' },
+    ]);
+    expect(splitQuestionReferences('`src/app.ts:10-20` 和 [实现](src/app.ts:10-20)')).toEqual([
+      { text: 'src/app.ts:10-20', href: 'src/app.ts:10-20' }, { text: ' 和 ' },
+      { text: '实现', href: 'src/app.ts:10-20' },
+    ]);
+    const spacedPath = String.raw`C:\Program Files\Cindy\app.log`;
+    expect(splitQuestionReferences(spacedPath)).toEqual([{ text: spacedPath }]);
+    expect(splitQuestionReferences('`' + spacedPath + '`')).toEqual([{ text: spacedPath, href: spacedPath }]);
+    expect(splitQuestionReferences('请查看 /tmp\n然后查看 notes.txt')).toEqual([
+      { text: '请查看 ' }, { text: '/tmp', href: '/tmp' },
+      { text: '\n然后查看 ' }, { text: 'notes.txt', href: 'notes.txt' },
+    ]);
+    const windowsHosts = String.raw`C:\Windows\System32\drivers\etc\hosts`;
+    expect(splitQuestionReferences(windowsHosts)).toEqual([{ text: windowsHosts, href: windowsHosts }]);
+    expect(splitQuestionReferences('/etc/hosts 和 /usr/bin/node')).toEqual([
+      { text: '/etc/hosts', href: '/etc/hosts' }, { text: ' 和 ' },
+      { text: '/usr/bin/node', href: '/usr/bin/node' },
+    ]);
+    expect(splitQuestionReferences('/etc/hosts, /usr/bin/node notes.txt')).toEqual([
+      { text: '/etc/hosts', href: '/etc/hosts' }, { text: ', ' },
+      { text: '/usr/bin/node', href: '/usr/bin/node' }, { text: ' ' },
+      { text: 'notes.txt', href: 'notes.txt' },
+    ]);
+    expect(splitQuestionReferences('/etc/hosts 和 `' + windowsHosts + '` 与 [hosts](/etc/hosts)')).toEqual([
+      { text: '/etc/hosts', href: '/etc/hosts' }, { text: ' 和 ' },
+      { text: windowsHosts, href: windowsHosts }, { text: ' 与 ' },
+      { text: 'hosts', href: '/etc/hosts' },
+    ]);
+    expect(splitQuestionReferences('请查看 HTTPS://en.wikipedia.org/wiki/Foo_(bar)。')).toEqual([
+      { text: '请查看 ' },
+      { text: 'HTTPS://en.wikipedia.org/wiki/Foo_(bar)', href: 'HTTPS://en.wikipedia.org/wiki/Foo_(bar)' },
+      { text: '。' },
+    ]);
+  });
+  it('keeps original questions attached to late answers without including skipped questions', () => {
+    expect(formatAsyncQuestionSupplement([{ question: 'Scope?\nDetails?', header: 'Scope' }, { question: 'Skipped?' }],
+      { Scope: 'Mobile too', 'Skipped?': '' })).toBe('> Scope?\n> Details?\n\nMobile too');
+    expect(formatAsyncQuestionSupplement([{ question: 'Q?' }], {})).toBe('');
+  });
+
+  it('never supplements an accepted native answer', async () => {
+    const read = vi.fn();
+    expect(await asyncQuestionNeedsSupplement(async () => ({ accepted: true }), read, 'q1')).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(['answered', 'cancelled', 'pending', 'missing'])('checks the original Host row after a lost receipt: %s', async (status) => {
+    const result = asyncQuestionNeedsSupplement(async () => { throw new Error('lost receipt'); },
+      async () => status === 'missing' ? undefined : JSON.stringify({ requestId: 'q1', status }), 'q1');
+    if (status === 'answered') expect(await result).toBe(false);
+    else if (status === 'cancelled') expect(await result).toBe(true);
+    else await expect(result).rejects.toThrow('not confirmed');
+  });
+
+  it('does not deliver against a different question or a still-pending paused question', async () => {
+    await expect(asyncQuestionNeedsSupplement(async () => ({ accepted: false }),
+      async () => ({ requestId: 'other', status: 'cancelled' }), 'q1')).rejects.toThrow();
+    await expect(asyncQuestionNeedsSupplement(async () => ({ accepted: false }),
+      async () => ({ requestId: 'q1', status: 'pending' }), 'q1')).rejects.toThrow();
+  });
+
+  it('builds resolve action presentation for requestId, busy, invalid, and confirm states', () => {
+    expect(buildInteractionResolveActionPresentation({
+      label: '允许一次',
+      requestId: 'p1',
+    })).toEqual({
+      disabled: false,
+      disabledReason: null,
+      label: '允许一次',
+    });
+
+    expect(buildInteractionResolveActionPresentation({
+      label: '允许一次',
+      confirmLabel: '确认允许一次',
+      armed: true,
+      requestId: 'p1',
+    })).toMatchObject({
+      disabled: false,
+      label: '确认允许一次',
+    });
+
+    expect(buildInteractionResolveActionPresentation({
+      label: '允许一次',
+      requestId: null,
+    })).toEqual({
+      disabled: true,
+      disabledReason: '这个远程交互缺少 requestId，无法回传决定。',
+      label: '允许一次',
+    });
+
+    expect(buildInteractionResolveActionPresentation({
+      label: '提交',
+      busy: true,
+      requestId: 'ask-1',
+    })).toEqual({
+      disabled: true,
+      disabledReason: '正在把决定回传到电脑端，请不要重复提交。',
+      label: '提交中',
+    });
+
+    expect(buildInteractionResolveActionPresentation({
+      label: '确认提交',
+      invalidReason: '补齐标题和正文后才能提交。',
+      requestId: 'issue-1',
+    })).toEqual({
+      disabled: true,
+      disabledReason: '补齐标题和正文后才能提交。',
+      label: '确认提交',
+    });
+  });
+
+  it('guards duplicate resolve submissions by requestId', () => {
+    expect(canStartInteractionResolve({
+      requestId: 'permission-1',
+      submittingRequestId: null,
+    })).toBe(true);
+    expect(canStartInteractionResolve({
+      requestId: 'permission-1',
+      submittingRequestId: 'permission-1',
+    })).toBe(false);
+    expect(canStartInteractionResolve({
+      requestId: null,
+      submittingRequestId: 'permission-1',
+    })).toBe(false);
+  });
+
+  it('builds decision summaries for pending interaction cards', () => {
+    expect(buildPermissionDecisionSummary({
+      toolName: 'Bash',
+      riskSummary: null,
+      canAlwaysAllow: true,
+    })).toEqual({
+      title: '可以只允许一次，也可以本任务总是允许',
+      detail: '工具: Bash',
+    });
+    expect(buildPermissionDecisionSummary({
+      toolName: 'Bash',
+      riskSummary: 'danger',
+      canAlwaysAllow: false,
+    }).title).toBe('高风险授权需要二次确认');
+
+    expect(buildAskQuestionProgressSummary({
+      currentIndex: 1,
+      total: 3,
+      multiSelect: true,
+    })).toEqual({
+      title: '第 2/3 个问题',
+      detail: '可多选，也可以输入其他回答。',
+    });
+
+    expect(buildPlanReviewDecisionSummary({
+      outlineCount: 2,
+      hasFilePath: true,
+      edited: false,
+    })).toEqual({
+      title: '批准后电脑端会按计划继续执行',
+      detail: '2 个章节 · 有计划文件',
+    });
+    expect(buildPlanReviewDecisionSummary({
+      outlineCount: 0,
+      hasFilePath: false,
+      edited: true,
+    })).toMatchObject({
+      title: '已编辑计划，批准后按当前版本执行',
+      detail: '无章节目录 · 无计划文件路径',
+    });
+
+    expect(buildIssueConfirmDecisionSummary({
+      type: 'bug',
+      canSubmit: false,
+    })).toEqual({
+      title: '补齐标题和正文后才能提交',
+      detail: '类型: Bug',
+    });
+  });
+
+  it('formats permission requests like the desktop prompt', () => {
+    expect(formatPermissionInput('Bash', { command: 'pnpm test' })).toBe('pnpm test');
+    expect(formatPermissionInput('Write', { file_path: '/repo/a.ts', content: 'x' })).toBe('/repo/a.ts');
+    expect(permissionTitle({ kind: 'permission', requestId: 'p1', toolName: 'Bash' })).toBe(
+      '允许使用 Bash?',
+    );
+  });
+
+  it('builds compact permission review evidence for mobile approval cards', () => {
+    const presentation = buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p1',
+      toolName: 'Bash',
+      input: { command: 'git reset --hard HEAD && rm -rf node_modules' },
+      suggestions: [
+        { destination: 'session', rules: [{ toolName: 'Bash' }] },
+        { destination: 'project', rules: [{ toolName: 'Bash' }] },
+      ],
+    });
+
+    expect(presentation).toMatchObject({
+      canAlwaysAllow: true,
+      code: 'git reset --hard HEAD && rm -rf node_modules',
+      riskSummary: expect.stringContaining('可能修改系统'),
+      summary: {
+        title: '高风险授权需要二次确认',
+        detail: '先核对命令内容，再点一次确认允许；不确定就拒绝。',
+      },
+      title: '允许运行这条命令？',
+      toolName: 'Bash',
+    });
+  });
+
+  // 2026-10-24: an Auto ask from Codex showed "Allow Codex to run this command?" with raw JSON
+  // and no reason. The card must say what runs, why Auto asked, and warn on risky exec commands.
+  it('explains Auto asks with the reviewer reason and the readable operation across harness tool names', () => {
+    const exec = buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p-ask',
+      toolName: 'exec',
+      title: 'Allow Codex to run this command?',
+      input: { command: 'xcrun simctl delete all', cwd: '/repo' },
+      metadata: { autoReviewReason: '这会删除电脑上的所有 iOS 模拟器，你只让我排查键盘问题。' },
+    });
+    expect(exec).toMatchObject({
+      title: '允许运行这条命令？',
+      code: 'xcrun simctl delete all\n# cwd: /repo',
+      autoReviewReason: '这会删除电脑上的所有 iOS 模拟器，你只让我排查键盘问题。',
+    });
+
+    const plugin = buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p-plugin',
+      toolName: 'mcp:cindy:ghost_call',
+      input: { ghost_id: 'cindy-github', tool: 'call_tool', args: { name: 'get_user', args: { username: 'octo' } } },
+    });
+    expect(plugin).toMatchObject({ title: '允许使用插件「cindy-github」？', code: 'get_user {"username":"octo"}', autoReviewReason: null });
+
+    expect(buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p-browser',
+      toolName: 'mcp:cindy_browser:call_tool',
+      input: { name: 'browser', args: { action: 'navigate', url: 'https://x.com/compose/post' } },
+    })).toMatchObject({ title: '允许浏览器执行这一步？', code: expect.stringContaining('navigate {"url":"https://x.com/compose/post"}') });
+
+    // The summary must not hide what the user is approving (review 2026-10-24: recipe/typed text, move/diff).
+    expect(describePermissionAction('mcp:cindy_browser:call_tool', {
+      name: 'browser', args: { action: 'recipe', recipeId: 'post-reply', site: 'x.com', text: 'hello' },
+    }).preview).toBe('recipe {"recipeId":"post-reply","site":"x.com","text":"hello"}');
+    // MCP names parse by plain string scan: both separators work and hostile names stay linear (CodeQL ReDoS).
+    expect(describePermissionAction('mcp__cindy_orca__create_workers', { n: 1 })).toMatchObject({ kind: 'plugin', subject: 'cindy_orca', preview: 'create_workers {"n":1}' });
+    expect(describePermissionAction('mcp:my-server:do_it', {})).toMatchObject({ kind: 'plugin', subject: 'my-server', preview: 'do_it' });
+    expect(describePermissionAction('mcp__', {}).kind).toBe('tool');
+    const hostile = `mcp:9${'-9'.repeat(50_000)}`;
+    const started = Date.now();
+    expect(describePermissionAction(hostile, {}).kind).toBe('tool');
+    expect(Date.now() - started).toBeLessThan(500);
+    // argv arrays keep argument boundaries.
+    expect(describePermissionAction('shell', { command: ['printf', '%s', 'a b', "it's", ''] }).preview)
+      .toBe("printf %s 'a b' 'it'\\''s' ''");
+    expect(describePermissionAction('exec', { command: 'rm -rf build', cwd: '/repo/app' }).preview)
+      .toBe('rm -rf build\n# cwd: /repo/app');
+    expect(describePermissionAction('Grep', { pattern: 'AKIA', path: '/Users/me' }).preview).toBe('AKIA \u2192 /Users/me');
+    expect(describePermissionAction('grep', { pattern: 'TODO' }).preview).toBe('TODO');
+    // call_tool.args stringified by the caller (issue #350) is parsed like the approval policy does.
+    expect(describePermissionAction('mcp:cindy_browser:call_tool', {
+      name: 'browser', args: JSON.stringify({ action: 'recipe', recipeId: 'post-reply' }),
+    }).preview).toBe('recipe {"recipeId":"post-reply"}');
+    expect(describePermissionAction('mcp:cindy:ghost_call', {
+      ghost_id: 'cindy-github', tool: 'call_tool', args: JSON.stringify({ name: 'get_user', args: JSON.stringify({ username: 'octo' }) }),
+    }).preview).toBe('get_user {"username":"octo"}');
+    expect(describePermissionAction('file_change', { changes: [
+      { path: '/repo/a.ts', kind: { type: 'update', move_path: '/repo/b.ts' }, diff: '@@ -1 +1 @@' },
+      { path: '/repo/old.ts', kind: { type: 'delete' } },
+    ] }).preview).toBe('update /repo/a.ts \u2192 /repo/b.ts\n@@ -1 +1 @@\ndelete /repo/old.ts');
+
+    // A failed review shows its own fixed copy, never a stale model reason.
+    expect(buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p-down',
+      toolName: 'Bash',
+      metadata: { autoReviewUnavailable: true, autoReviewReason: 'stale' },
+    }).autoReviewReason).toBeNull();
+  });
+
+  it('marks auto-review unavailable handoffs so mobile can localize the confirmation copy', () => {
+    const presentation = buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p-unavailable',
+      toolName: 'Bash',
+      description: 'Automatic review could not finish, so this action needs your confirmation.',
+      metadata: { autoReviewUnavailable: true, imSourceDescription: '来源：Telegram · 开发群' },
+      input: { command: 'npx tsc --noEmit' },
+    });
+
+    expect(presentation.autoReviewUnavailable).toBe(true);
+    expect(presentation.sourceDescription).toBe('来源：Telegram · 开发群');
+    expect(presentation.description).toBe(
+      'Automatic review could not finish, so this action needs your confirmation.',
+    );
+    expect(buildPermissionReviewPresentation({
+      kind: 'permission',
+      requestId: 'p-plain',
+      toolName: 'Bash',
+      description: 'Allow this command?',
+    }).autoReviewUnavailable).toBe(false);
+  });
+
+  it('builds ask question review presentation for mobile answer cards', () => {
+    const presentation = buildAskQuestionReviewPresentation({
+      currentIndex: 4,
+      questions: [{
+        header: '测试计划',
+        question: 'iOS 视觉回归先覆盖哪一类交互?',
+        multiSelect: true,
+        options: [
+          { label: 'Pending 队列', description: '覆盖当前和后续待处理请求。' },
+          { label: '消息渲染' },
+        ],
+      }],
+    });
+
+    expect(presentation).toMatchObject({
+      allowsCustomAnswer: true,
+      currentIndex: 0,
+      currentNumber: 1,
+      header: '测试计划',
+      multiSelect: true,
+      optionCount: 2,
+      pageLabel: '1/1',
+      summary: {
+        title: '第 1/1 个问题',
+        detail: '可多选，也可以输入其他回答。',
+      },
+      title: 'iOS 视觉回归先覆盖哪一类交互?',
+      totalCount: 1,
+    });
+
+    expect(buildAskQuestionReviewPresentation({ currentIndex: 0, questions: [] })).toMatchObject({
+      allowsCustomAnswer: false,
+      current: null,
+      pageLabel: '0/0',
+      summary: {
+        title: '没有具体问题',
+        detail: '可以提交空回答让电脑端继续。',
+      },
+    });
+  });
+
+  it('builds issue confirm review presentation for mobile confirmation cards', () => {
+    expect(buildIssueConfirmReviewPresentation({
+      draft: {
+        title: 'Mobile fixture issue',
+        body: 'Generated by the mock host controls scenario.',
+        type: 'bug',
+      },
+      env: {
+        appVersion: '0.0.0-mobile-e2e',
+        platform: 'darwin',
+        arch: 'arm64',
+        osVersion: 'fixture',
+        harness: 'Pi',
+        modelId: 'claude-sonnet-4-5',
+      },
+      uiLanguage: 'zh-CN',
+    })).toEqual({
+      bodyCharCount: 45,
+      canSubmit: true,
+      envLabel: '0.0.0-mobile-e2e / darwin / arm64 / fixture / Pi / claude-sonnet-4-5 / zh-CN',
+      issueTypeLabel: 'Bug',
+      summary: {
+        title: '草稿完整，可以确认提交',
+        detail: '类型: Bug',
+      },
+      titleCharCount: 20,
+    });
+  });
+
+  it('flags high-risk shell permission requests for mobile confirmation', () => {
+    expect(permissionRiskSummary({
+      kind: 'permission',
+      requestId: 'p1',
+      toolName: 'Bash',
+      input: { command: 'pnpm test' },
+    })).toBeNull();
+
+    expect(permissionRiskSummary({
+      kind: 'permission',
+      requestId: 'p2',
+      toolName: 'Bash',
+      input: { command: 'git reset --hard HEAD && rm -rf node_modules' },
+    })).toContain('可能修改系统');
+
+    expect(permissionRiskSummary({
+      kind: 'permission',
+      requestId: 'p3',
+      toolName: 'Read',
+      input: { file_path: '/repo/app.ts' },
+    })).toBeNull();
+  });
+
+  it('serializes permission allow-once, deny, and session scoped suggestions', () => {
+    const sessionRule = { destination: 'session', rules: [{ toolName: 'Bash' }] };
+    const projectRule = { destination: 'project', rules: [{ toolName: 'Bash' }] };
+    const suggestions = sessionScopedPermissionSuggestions([sessionRule, projectRule, null]);
+
+    expect(suggestions).toEqual([sessionRule]);
+    expect(buildPermissionDecision('allow')).toMatchObject({
+      kind: 'permission',
+      behavior: 'allow',
+    });
+    expect(buildPermissionDecision('deny', { reason: 'User denied' })).toMatchObject({
+      kind: 'permission',
+      behavior: 'deny',
+      reason: 'User denied',
+    });
+    expect(buildPermissionDecision('allow', { permissionUpdates: suggestions })).toMatchObject({
+      kind: 'permission',
+      behavior: 'allow',
+      permissionUpdates: [sessionRule],
+    });
+  });
+
+  it('normalizes AskUserQuestion payload and keeps desktop multi-select encoding', () => {
+    const questions = normalizeAskQuestions([
+      {
+        question: '用哪个库?',
+        header: '选择',
+        multiSelect: true,
+        options: [
+          { label: 'React Native', description: '原生端' },
+          { label: 'Expo' },
+        ],
+      },
+      { question: 123 },
+    ]);
+
+    expect(questions).toHaveLength(1);
+    const answer = encodeMultiSelectAnswer(
+      questions[0].options ?? [],
+      new Set(['Expo']),
+      '自定义',
+    );
+    expect(answer).toBe(JSON.stringify(['Expo', '自定义']));
+    expect(selectionFromAnswer(questions[0], answer)).toMatchObject({
+      customInput: '自定义',
+      showCustomInput: true,
+    });
+    expect(buildAskUserQuestionDecision({ '用哪个库?': answer })).toEqual({
+      kind: 'ask_user_question',
+      answers: { '用哪个库?': answer },
+    });
+  });
+
+  it('flags model-authored free-text answer options but keeps ordinary labels', () => {
+    // 模型自己写的「其他」逃生选项是自由输入入口。
+    expect(isFreeTextAskOptionLabel('其他（回复说明）')).toBe(true);
+    expect(isFreeTextAskOptionLabel('其它（请补充说明）')).toBe(true);
+    expect(isFreeTextAskOptionLabel('其他')).toBe(true);
+    expect(isFreeTextAskOptionLabel('其他答案')).toBe(true);
+    expect(isFreeTextAskOptionLabel('其他选项（请说明）')).toBe(true);
+    expect(isFreeTextAskOptionLabel('其他: 请填写')).toBe(true);
+    expect(isFreeTextAskOptionLabel('Other')).toBe(true);
+    expect(isFreeTextAskOptionLabel('Others')).toBe(true);
+    expect(isFreeTextAskOptionLabel('Other (please specify)')).toBe(true);
+    expect(isFreeTextAskOptionLabel('Other: please specify')).toBe(true);
+    expect(isFreeTextAskOptionLabel('Something else…')).toBe(true);
+    expect(isFreeTextAskOptionLabel('その他')).toBe(true);
+    expect(isFreeTextAskOptionLabel('기타')).toBe(true);
+    // 普通选项不能被误判。
+    expect(isFreeTextAskOptionLabel('其他任务')).toBe(false);
+    expect(isFreeTextAskOptionLabel('其他供应商')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Other tasks')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Other providers')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Otherwise')).toBe(false);
+    expect(isFreeTextAskOptionLabel('その他の質問')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Rearrange layout')).toBe(false);
+    expect(isFreeTextAskOptionLabel('')).toBe(false);
+    expect(isFreeTextAskOptionLabel('   ')).toBe(false);
+    // 只是提到「说明/填写」的实质选项不是逃生入口（真实卡片里的反例）。
+    expect(isFreeTextAskOptionLabel('sensor_height 要改（回复说明数值）')).toBe(false);
+    expect(isFreeTextAskOptionLabel('以上都不是（请说明）')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Specify another provider')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Enter your own path')).toBe(false);
+    expect(isFreeTextAskOptionLabel('Specify later')).toBe(false);
+  });
+
+  it('drops model-authored free-text options while keeping ordinary and described options', () => {
+    const options = [
+      { label: 'React Native', description: '原生端' },
+      { label: '其他（回复说明）' },
+      { label: 'Expo' },
+      { label: 'Other (please specify)' },
+    ];
+
+    expect(visibleAskOptions(options)).toEqual([
+      { label: 'React Native', description: '原生端' },
+      { label: 'Expo' },
+    ]);
+    // 全是被替换的入口时返回空列表,由调用方退回自由输入。
+    expect(visibleAskOptions([{ label: '其他' }])).toEqual([]);
+    expect(visibleAskOptions(undefined)).toEqual([]);
+  });
+
+  it('serializes plan review approve and feedback decisions', () => {
+    expect(buildPlanReviewDecision(true, '# Plan')).toEqual({
+      kind: 'plan_review',
+      behavior: 'allow',
+      editedPlan: '# Plan',
+      reason: undefined,
+    });
+    expect(buildPlanReviewDecision(false, '# Plan', '补测试')).toEqual({
+      kind: 'plan_review',
+      behavior: 'deny',
+      editedPlan: undefined,
+      reason: '补测试',
+    });
+  });
+
+  it('builds compact plan review evidence for mobile approval surfaces', () => {
+    const presentation = buildPlanReviewEvidencePresentation({
+      edited: true,
+      filePath: '/tmp/xdt-maker-mobile-visual/mobile-v1-plan.md',
+      maxOutlineItems: 2,
+      plan: [
+        '# Mobile Remote Control',
+        '先把 iOS 端远程控制流程做成稳定体验。',
+        '## Shared Core',
+        '- 使用桌面一致的展示模型。',
+        '## Visual Tests',
+        '- 截图基线必须覆盖 pending。',
+      ].join('\n'),
+    });
+
+    expect(presentation).toMatchObject({
+      compactPath: '.../mobile-v1-plan.md',
+      fileName: 'mobile-v1-plan.md',
+      filePath: '/tmp/xdt-maker-mobile-visual/mobile-v1-plan.md',
+      hasPlanText: true,
+      outlineOverflowCount: 1,
+      outlineTotalCount: 3,
+      summary: {
+        title: '已编辑计划，批准后按当前版本执行',
+        detail: '3 个章节 · 有计划文件',
+      },
+    });
+    expect(presentation.outlineItems.map((item) => item.title)).toEqual([
+      'Mobile Remote Control',
+      'Shared Core',
+    ]);
+  });
+
+  it('matches the desktop pending-interaction priority order', () => {
+    const interactions: PendingInteractionLike[] = [
+      { request: { kind: 'issue_confirm', requestId: 'issue-1' } },
+      { request: { kind: 'ask_user_question', requestId: 'ask-1' } },
+      { request: { kind: 'permission', requestId: 'permission-1' } },
+      { request: { kind: 'plan_review', requestId: 'plan-1' } },
+      { request: { kind: 'plugin_setup', requestId: 'setup-1' } },
+      { request: { kind: 'custom', requestId: 'custom-1' } },
+    ];
+
+    expect(sortPendingInteractions(interactions).map((item) => item.request.requestId)).toEqual([
+      'plan-1',
+      'permission-1',
+      'ask-1',
+      'issue-1',
+      'setup-1',
+      'custom-1',
+    ]);
+    expect(selectActivePendingInteraction(interactions)?.request.requestId).toBe('plan-1');
+    expect(selectActivePendingInteraction([])).toBeNull();
+  });
+
+  it('projects a mobile-friendly pending interaction queue from desktop priority order', () => {
+    const interactions: PendingInteractionLike[] = [
+      { request: { kind: 'issue_confirm', requestId: 'issue-1' } },
+      { request: { kind: 'ask_user_question', requestId: 'ask-1' } },
+      { request: { kind: 'permission', requestId: 'permission-1' } },
+      { request: { kind: 'plan_review', requestId: 'plan-1' } },
+      { request: { kind: 'custom', requestId: 'custom-1' } },
+    ];
+
+    expect(buildPendingInteractionQueuePresentation(interactions, { maxVisible: 3 })).toMatchObject({
+      countLabel: '5 个',
+      hint: '先看计划，必要时反馈修改，确认后电脑端才继续执行。',
+      overflowCount: 2,
+      title: '需要确认执行计划',
+      totalCount: 5,
+      items: [
+        {
+          active: true,
+          kind: 'plan_review',
+          label: '计划',
+          positionLabel: '当前',
+          requestId: 'plan-1',
+        },
+        {
+          active: false,
+          kind: 'permission',
+          label: '授权',
+          positionLabel: '接着',
+          requestId: 'permission-1',
+        },
+        {
+          active: false,
+          kind: 'ask_user_question',
+          label: '问题',
+          positionLabel: '第 3',
+          requestId: 'ask-1',
+        },
+      ],
+    });
+
+    expect(buildPendingInteractionQueuePresentation(interactions, { readOnly: true }).hint)
+      .toBe('协同只读模式，仅展示电脑端请求。');
+    expect(buildPendingInteractionQueuePresentation([])).toMatchObject({
+      active: null,
+      countLabel: '当前',
+      title: '没有待处理请求',
+      totalCount: 0,
+    });
+  });
+
+  it('extracts plan outline from desktop-supported markdown headings', () => {
+    const outline = extractPlanOutline([
+      '# 总览',
+      '先处理登录和连接。',
+      '```ts',
+      '## 代码里的假标题',
+      '```',
+      '## 交互细节 ##',
+      '保留桌面端语义。',
+      '#### 太深的标题',
+      '### 测试',
+    ].join('\n'));
+
+    expect(outline).toEqual([
+      {
+        id: 'plan-heading-1',
+        title: '总览',
+        level: 1,
+        line: 1,
+        preview: '先处理登录和连接。',
+      },
+      {
+        id: 'plan-heading-6',
+        title: '交互细节',
+        level: 2,
+        line: 6,
+        preview: '保留桌面端语义。',
+      },
+      {
+        id: 'plan-heading-9',
+        title: '测试',
+        level: 3,
+        line: 9,
+        preview: '',
+      },
+    ]);
+  });
+
+  it('ignores headings inside tilde fences when extracting plan outline', () => {
+    expect(extractPlanOutline([
+      '~~~',
+      '# fenced',
+      '~~~',
+      '## Real',
+    ].join('\n'))).toEqual([
+      {
+        id: 'plan-heading-4',
+        title: 'Real',
+        level: 2,
+        line: 4,
+        preview: '',
+      },
+    ]);
+  });
+
+  it('normalizes issue confirmation and builds bridge-compatible decisions', () => {
+    const payload = normalizeIssueConfirm({
+      kind: 'issue_confirm',
+      requestId: 'i1',
+      draft: { title: 'Bug', body: 'Steps', type: 'bug' },
+      env: {
+        appVersion: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        harness: 'Claude Code',
+        modelId: ' custom\nmodel ',
+      },
+    });
+
+    expect(payload).toMatchObject({
+      draft: { title: 'Bug', body: 'Steps', type: 'bug' },
+      env: {
+        appVersion: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        harness: 'Claude Code',
+        modelId: 'custom model',
+      },
+    });
+    expect(buildIssueConfirmDecision(true, payload!.draft, 'zh-CN')).toEqual({
+      confirmed: true,
+      title: 'Bug',
+      body: 'Steps',
+      type: 'bug',
+      uiLanguage: 'zh-CN',
+    });
+    expect(buildIssueConfirmDecision(false)).toEqual({ confirmed: false });
+  });
+
+  it('only lets remotely resolvable interactions take over the controller composer', () => {
+    expect(remoteInteractionHandling({ request: { kind: 'permission', requestId: 'p1' } })).toBe('resolvable');
+    expect(remoteInteractionHandling({ request: { kind: 'ask_user_question', requestId: 'a1' } })).toBe('resolvable');
+    expect(remoteInteractionHandling({ request: { kind: 'plan_review', requestId: 'pl1' } })).toBe('resolvable');
+    expect(remoteInteractionHandling({ request: { kind: 'plugin_setup', requestId: 's1', revision: 1 } })).toBe('cancel-only');
+    // 收尾帧不再 actionable,取消也没有意义。
+    expect(remoteInteractionHandling({
+      request: { kind: 'plugin_setup', requestId: 's1', revision: 2, terminal: true },
+    })).toBe('desktop-only');
+    // cancel-only 与 buildPluginSetupCancelDecision 对齐:拿不到合法 revision 就不是
+    // 「能取消」,否则调用方只看 handling 会误判。
+    expect(remoteInteractionHandling({ request: { kind: 'plugin_setup', requestId: 's1' } })).toBe('desktop-only');
+    expect(remoteInteractionHandling({ request: { kind: 'plugin_setup', requestId: 's1', revision: 1.5 } })).toBe('desktop-only');
+    expect(remoteInteractionHandling({ request: { kind: 'plugin_setup', requestId: 's1', revision: -1 } })).toBe('desktop-only');
+    expect(remoteInteractionHandling({ request: { kind: 'plugin_setup', requestId: 's1', revision: 0 } })).toBe('cancel-only');
+    expect(remoteInteractionHandling({ request: { kind: 'issue_confirm', requestId: 'i1' } })).toBe('desktop-only');
+    // 被控端将来新增的类型默认落进「不阻塞」,不会再把手机会话锁死。
+    expect(remoteInteractionHandling({ request: { kind: 'future_kind', requestId: 'f1' } })).toBe('desktop-only');
+
+    expect(interactionBlocksRemoteComposer({ request: { kind: 'permission', requestId: 'p1' } })).toBe(true);
+    expect(interactionBlocksRemoteComposer({ request: { kind: 'plugin_setup', requestId: 's1', revision: 1 } })).toBe(false);
+    expect(interactionBlocksRemoteComposer({ request: { kind: 'future_kind', requestId: 'f1' } })).toBe(false);
+    expect(interactionBlocksRemoteComposer(null)).toBe(false);
+  });
+
+  it('lets the controller answer 代输入 without taking over its composer', () => {
+    const live = { request: { kind: 'input_handoff', requestId: 'h1', revision: 3 } };
+    const ended = { request: { kind: 'input_handoff', requestId: 'h1', revision: 4, terminal: true } };
+    expect(remoteInteractionHandling(live)).toBe('resolvable');
+    expect(remoteInteractionHandling(ended)).toBe('desktop-only');
+    // A Host-owned wait outlives the turn; the owner must still be able to chat.
+    expect(interactionBlocksRemoteComposer(live)).toBe(false);
+    expect(pendingInteractionsBlockRemoteComposer([live])).toBe(false);
+    // A question the turn is blocked on still comes first.
+    expect(sortPendingInteractions([
+      live,
+      { request: { kind: 'permission', requestId: 'p1' } },
+    ]).map((item) => item.request.requestId)).toEqual(['p1', 'h1']);
+  });
+
+  it('keys composer blocking off the whole pending set, not the card being viewed', () => {
+    // 混合队列:切到 plugin_setup 只是换了查看对象,那张权限卡仍在等回答 —— 输入框
+    // 不能因此放开,否则用户绕过了仍待处理的阻塞交互。
+    expect(pendingInteractionsBlockRemoteComposer([
+      { request: { kind: 'plugin_setup', requestId: 's1', revision: 1 } },
+      { request: { kind: 'permission', requestId: 'p1' } },
+    ])).toBe(true);
+
+    // 整批都是本端终结不了的卡:输入框回来。
+    expect(pendingInteractionsBlockRemoteComposer([
+      { request: { kind: 'plugin_setup', requestId: 's1', revision: 1 } },
+      { request: { kind: 'issue_confirm', requestId: 'i1' } },
+      { request: { kind: 'future_kind', requestId: 'f1' } },
+    ])).toBe(false);
+
+    expect(pendingInteractionsBlockRemoteComposer([])).toBe(false);
+  });
+
+  it('builds a revision-pinned plugin setup cancel decision and a readable remote summary', () => {
+    expect(buildPluginSetupCancelDecision({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      revision: 3,
+    })).toEqual({ kind: 'plugin_setup', action: 'cancel', expectedRevision: 3 });
+
+    // revision 缺失 / 非法时不构造决定:被控端只接受与当前快照一致的 revision,
+    // 发出去也只会被丢弃,调用方据此不给取消入口。
+    expect(buildPluginSetupCancelDecision({ kind: 'plugin_setup', requestId: 's1' })).toBeNull();
+    expect(buildPluginSetupCancelDecision({ kind: 'plugin_setup', requestId: 's1', revision: 1.5 })).toBeNull();
+    expect(buildPluginSetupCancelDecision({ kind: 'plugin_setup', requestId: 's1', revision: -1 })).toBeNull();
+    expect(buildPluginSetupCancelDecision({ kind: 'permission', requestId: 'p1', revision: 1 })).toBeNull();
+
+  });
+
+  it('projects a full read-only plugin setup status card for controllers', () => {
+    const presentation = buildRemotePluginSetupPresentation({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      revision: 2,
+      ghost: {
+        id: 'cindy-web-search',
+        name: ' Cindy Web Search ',
+        iconDataUrl: 'data:image/png;base64,AAAA',
+      },
+      intro: ' 需要一个搜索 API key ',
+      steps: [
+        {
+          id: 'brave',
+          groupId: 'search-key',
+          groupMode: 'any_of',
+          title: ' Brave key ',
+          description: ' 用 Brave 的搜索 API ',
+          phase: 'failed',
+          errorCode: 'SAVE_FAILED',
+          action: {
+            id: 'inline:opaque',
+            kind: 'inline_form',
+            form: { fields: [{ id: 'value', type: 'secret', label: ' Brave API key ' }] },
+          },
+        },
+        {
+          id: 'tavily',
+          groupId: 'search-key',
+          groupMode: 'any_of',
+          title: 'Tavily key',
+          phase: 'pending',
+          action: { id: 'oauth:opaque', kind: 'oauth_connect' },
+        },
+        {
+          id: 'model',
+          groupId: 'model',
+          groupMode: 'any_of',
+          title: '连接模型服务',
+          phase: 'satisfied',
+        },
+      ],
+    });
+
+    expect(presentation).toEqual({
+      ghostName: 'Cindy Web Search',
+      iconDataUrl: 'data:image/png;base64,AAAA',
+      intro: '需要一个搜索 API key',
+      satisfiedCount: 1,
+      stepCount: 3,
+      terminal: false,
+      groups: [
+        {
+          id: 'search-key',
+          // 组内两项 → 「任选其一」
+          anyOf: true,
+          steps: [
+            {
+              id: 'brave',
+              title: 'Brave key',
+              description: '用 Brave 的搜索 API',
+              phase: 'failed',
+              errorCode: 'SAVE_FAILED',
+              actionKind: 'inline_form',
+              inlineFieldLabel: 'Brave API key',
+            },
+            {
+              id: 'tavily',
+              title: 'Tavily key',
+              description: null,
+              phase: 'pending',
+              errorCode: null,
+              actionKind: 'oauth_connect',
+              inlineFieldLabel: null,
+            },
+          ],
+        },
+        {
+          id: 'model',
+          // 单项组没有「任选其一」语义,提示只会让用户困惑
+          anyOf: false,
+          steps: [{
+            id: 'model',
+            title: '连接模型服务',
+            description: null,
+            phase: 'satisfied',
+            errorCode: null,
+            actionKind: null,
+            inlineFieldLabel: null,
+          }],
+        },
+      ],
+    });
+  });
+
+  it.each([
+    'AUTH_NETWORK',
+    'AUTH_SERVICE_UNAVAILABLE',
+  ] as const)('preserves remote OAuth setup error %s', (errorCode) => {
+    const presentation = buildRemotePluginSetupPresentation({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      steps: [{ id: 'oauth', title: 'OAuth', phase: 'failed', errorCode }],
+    });
+
+    expect(presentation.groups[0]?.steps[0]?.errorCode).toBe(errorCode);
+  });
+
+  it('collapses unknown plugin setup enums instead of passing them through to copy lookups', () => {
+    const presentation = buildRemotePluginSetupPresentation({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      revision: 1,
+      terminal: true,
+      steps: [
+        // 被控端新版本引入的值:降级为 null,少一个徽标而不是查表查出 key 字面量
+        { id: 'a', title: 'A', phase: 'teleporting', errorCode: 'NOT_A_CODE', action: { id: 'x', kind: 'mind_control' } },
+        { id: 'b', title: '   ' },
+        'not-a-step',
+      ],
+    });
+
+    expect(presentation.terminal).toBe(true);
+    expect(presentation.stepCount).toBe(1);
+    expect(presentation.groups).toEqual([{
+      id: 'ungrouped-0',
+      anyOf: false,
+      steps: [{
+        id: 'a',
+        title: 'A',
+        description: null,
+        phase: null,
+        errorCode: null,
+        actionKind: null,
+        inlineFieldLabel: null,
+      }],
+    }]);
+
+    // 远程 URL 图标一律丢弃:只接受内联 data:image/。
+    expect(buildRemotePluginSetupPresentation({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      ghost: { id: 'g', name: 'G', iconDataUrl: 'https://example.com/icon.png' },
+    }).iconDataUrl).toBeNull();
+
+    // 远端重复用同一个 step id 且都缺 groupId 时,仍必须各自成组——只按 step.id 造
+    // fallback key 会把它们并回一组,与「缺 groupId 各自成组」的语义矛盾(#540 review)。
+    const duplicated = buildRemotePluginSetupPresentation({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      steps: [
+        { id: 'same', title: '第一步' },
+        { id: 'same', title: '第二步' },
+      ],
+    });
+    expect(duplicated.groups.map((g) => g.id)).toEqual(['ungrouped-0', 'ungrouped-1']);
+    expect(duplicated.groups.map((g) => g.steps.length)).toEqual([1, 1]);
+
+    // 合成身份与被控端真实 groupId 共用命名空间:撞名时绝不能并组,否则两批互不
+    // 相关的要求会被当成「二选一」,用户漏做另一半(#657 review)。
+    const collided = buildRemotePluginSetupPresentation({
+      kind: 'plugin_setup',
+      requestId: 's1',
+      steps: [
+        { id: 'a', title: '无组步骤' },
+        { id: 'b', title: '真实组步骤', groupId: 'ungrouped-0', groupMode: 'any_of' },
+      ],
+    });
+    expect(collided.groups.map((g) => g.steps.map((s) => s.title))).toEqual([['无组步骤'], ['真实组步骤']]);
+    // 展示 id 仍去重,渲染层拿它当 list key。
+    expect(collided.groups.map((g) => g.id)).toEqual(['ungrouped-0', 'ungrouped-0-2']);
+    // 撞名的真实组只有 1 步 → any_of 收敛为 false,不会误显示「任选其一」。
+    expect(collided.groups.map((g) => g.anyOf)).toEqual([false, false]);
+
+    // 换个 kind 传进来必须返回空投影,而不是从任意 request 上刮字段让误用「看起来正常」。
+    expect(buildRemotePluginSetupPresentation({
+      kind: 'permission',
+      requestId: 'p1',
+      ghost: { id: 'x', name: 'Not a plugin setup' },
+      intro: 'nope',
+      steps: [{ id: 's', title: 'nope' }],
+    })).toEqual({
+      ghostName: null,
+      iconDataUrl: null,
+      intro: null,
+      groups: [],
+      satisfiedCount: 0,
+      stepCount: 0,
+      terminal: false,
+    });
+  });
+});
