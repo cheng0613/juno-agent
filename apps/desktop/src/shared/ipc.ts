@@ -41,6 +41,8 @@ export const IPC = {
   listModels: 'host:list-models',
   /** 渲染 → 主：热切换模型 */
   switchModel: 'host:switch-model',
+  /** 渲染 → 主：导出会话为 HTML */
+  exportHtml: 'host:export-html',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
@@ -237,6 +239,8 @@ export interface HostBridge {
   listModels(): Promise<{ models: Array<{ id: string; label: string }>; current: string }>;
   /** 切换模型；rebuilt=true 表示上下文可能重建过 */
   switchModel(sessionId: string, modelId: string): Promise<{ rebuilt: boolean }>;
+  /** 导出会话为 HTML，返回落盘的绝对路径 */
+  exportHtml(sessionId: string): Promise<string>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }

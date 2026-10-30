@@ -185,6 +185,13 @@ function registerIpc(): void {
     return runtime!.switchModel(sessionId, modelId);
   });
 
+  ipcMain.handle(IPC.exportHtml, async (_e, sessionId: string) => {
+    const filePath = await runtime!.exportHtml(sessionId);
+    // 导完直接在系统文件管理器里选中它 —— 导出了却找不到等于没导
+    shell.showItemInFolder(filePath);
+    return filePath;
+  });
+
   // 只在自动化验收时开的后门：伪造一条穿透引擎的压缩边界。
   // pi 的手动压缩有内置下限，小会话永远 noop，用真实 API 堆到那个量级不经济；
   // 而我们要验的「事件→落库→渲染」那半条链路，能用一个真实事件完整跑一遍。
@@ -245,7 +252,11 @@ app.whenReady().then(async () => {
     process.env.APP_DATA_DIR ??= app.getPath('userData');
   }
 
-  runtime = new HostRuntime(configFromEnv());
+  runtime = new HostRuntime({
+    ...configFromEnv(),
+    // 导出的 HTML 落到用户能找到的地方（文档目录），而不是 app 数据目录深处
+    exportDir: process.env.APP_EXPORT_DIR ?? path.join(app.getPath('documents'), 'Agent 导出'),
+  });
   await runtime.init();
 
   // 宿主事件 → 一条通道单向推给渲染层
@@ -266,9 +277,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=diff       → 验本轮改动面板
   //   APP_AUTOTEST=mode       → 验权限档位与计划模式
   //   APP_AUTOTEST=model      → 验模型热切换（需 APP_MODELS 配两个）
+  //   APP_AUTOTEST=export     → 验导出 HTML
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -287,7 +299,9 @@ app.whenReady().then(async () => {
                     ? runModeTest(win, runtime)
                     : mode === 'model'
                       ? runModelTest(win, runtime)
-                      : runAutotest(win, runtime)
+                      : mode === 'export'
+                        ? runExportTest(win, runtime)
+                        : runAutotest(win, runtime)
     );
   }
 

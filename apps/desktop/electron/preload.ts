@@ -30,6 +30,7 @@ const bridge: HostBridge = {
   setEffort: (sessionId, effort) => ipcRenderer.invoke(IPC.setEffort, sessionId, effort),
   listModels: () => ipcRenderer.invoke(IPC.listModels),
   switchModel: (sessionId, modelId) => ipcRenderer.invoke(IPC.switchModel, sessionId, modelId),
+  exportHtml: (sessionId) => ipcRenderer.invoke(IPC.exportHtml, sessionId),
 
   onEvent: (listener) => {
     // 只把 payload 交给渲染层，不暴露 event 对象（含 sender 等能力）

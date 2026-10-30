@@ -619,7 +619,7 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
   const clickCompact = () =>
     win.webContents.executeJavaScript(
       `(() => {
-         const b = document.querySelector('.topbar-action');
+         const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('压缩'));
          if (!b) return 'no-btn';
          if (b.disabled) return 'disabled';
          b.click();
@@ -1282,6 +1282,128 @@ export async function runModelTest(win: BrowserWindow, runtime: HostRuntime): Pr
     await fs
       .writeFile(
         path.join(outDir, 'model-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 导出 HTML 验收。
+ *
+ * 不只看「API 返回了路径」—— 要真的去磁盘上确认文件存在、内容是 HTML、
+ * 且包含对话里的字。导出功能最容易出的问题是「返回了个路径，文件其实是空的」。
+ */
+export async function runExportTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/export] ${s}`);
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  try {
+    await delay(2200);
+    const boot = await win.webContents.executeJavaScript('window.host.createSession()');
+    const sessionId: string = boot.activeSessionId;
+
+    // 必须走真实输入路径：直接调 window.host.send 不经过 React，
+    // messages 还是空的，而导出按钮在空会话上是禁用的
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const ta = document.querySelector('textarea');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '用一句话说明什么是 HTTP 缓存');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return 'ok';
+      })()
+    `);
+    await waitFor(() => turnsDone >= 1, 120_000, '第一轮结束');
+    await delay(800);
+
+    const btnState = await win.webContents.executeJavaScript(
+      `(() => {
+         const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('导出'));
+         return b ? (b.disabled ? 'disabled' : 'ok') : 'missing';
+       })()`,
+    );
+    note(`导出按钮状态: ${btnState}`);
+    if (btnState !== 'ok') throw new Error(`导出按钮不可用: ${btnState}`);
+
+    const clicked = await win.webContents.executeJavaScript(
+      `(() => {
+         const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('导出'));
+         if (!b) return 'missing';
+         b.click();
+         return 'ok';
+       })()`,
+    );
+    note(`点击导出: ${clicked}`);
+
+    // 等导出完成（pi 要渲染整个对话，给几秒）
+    await delay(3000);
+
+    const notice = await win.webContents.executeJavaScript(
+      `document.querySelector('.notice') ? document.querySelector('.notice').innerText : ''`,
+    );
+    note(`提示文案: ${notice}`);
+    await shootTo(win, '26-export');
+    note('截图 26-export');
+
+    // 从提示里抠路径，然后去磁盘确认
+    const match = String(notice).match(/已导出到\s+(.+?)(\s+知道了)?$/);
+    if (!match) throw new Error(`提示里没有导出路径: ${notice}`);
+    const filePath = match[1]!.trim();
+    note(`导出路径: ${filePath}`);
+
+    const stat = await fs.stat(filePath).catch(() => null);
+    if (!stat) throw new Error(`文件不存在: ${filePath}`);
+    note(`文件大小: ${stat.size} 字节`);
+    if (stat.size < 500) throw new Error(`文件太小，可能是空的: ${stat.size} 字节`);
+
+    const html = await fs.readFile(filePath, 'utf8');
+    const lower = html.toLowerCase();
+    if (!lower.includes('<html') && !lower.includes('<!doctype')) {
+      throw new Error('导出的不是 HTML');
+    }
+    note(`HTML 长度: ${html.length}`);
+    // 内容里应该能找到对话里的关键词
+    const hasContent = html.includes('HTTP') || html.includes('缓存');
+    note(`包含对话内容: ${hasContent}`);
+    if (!hasContent) throw new Error('导出的 HTML 里没有对话内容');
+
+    await fs.writeFile(
+      path.join(outDir, 'export-result.json'),
+      JSON.stringify({ ok: true, filePath, size: stat.size, htmlLength: html.length, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-export-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'export-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )

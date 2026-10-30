@@ -66,6 +66,8 @@ export interface HostConfig {
   agentHome: string;
   /** 审批策略：真实产品用 'ipc'（抛给渲染层），CLI 用 'allow' */
   approval: 'ipc' | 'allow';
+  /** 导出 HTML 的落地目录 */
+  exportDir: string;
 }
 
 export function configFromEnv(): HostConfig {
@@ -91,10 +93,24 @@ export function configFromEnv(): HostConfig {
     workDir: process.env.APP_WORKDIR ?? path.join(dataDir, 'workspace'),
     agentHome: process.env.APP_AGENT_HOME ?? path.join(dataDir, 'pi-agent-home'),
     approval: (process.env.APP_APPROVAL ?? 'ipc') as 'ipc' | 'allow',
+    // 默认落到系统临时目录下的 exports；main 会用真正的「文档」目录覆盖
+    exportDir: process.env.APP_EXPORT_DIR ?? path.join(dataDir, 'exports'),
   };
 }
 
 const logger = createConsoleLogger('host');
+
+/** 文件名里的非法字符：Windows 比 posix 严，统一按最严的来 */
+function sanitizeFileName(raw: string): string {
+  const cleaned = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // 末尾的点和空格在 Windows 上会被静默吃掉，进而导致路径对不上
+    .replace(/[. ]+$/, '');
+  return (cleaned || '会话').slice(0, 60);
+}
 
 /** 新建会话的占位标题；只有还是它的时候才会被自动改写 */
 const DEFAULT_SESSION_TITLE = '新会话';
@@ -821,6 +837,32 @@ export class HostRuntime {
     this.emit({ type: 'model', modelId });
 
     return { rebuilt: action === 'rebuild' };
+  }
+
+  /**
+   * 导出会话为 HTML。
+   *
+   * 指定路径而不是交给 pi 自选：它自选的默认位置用户根本找不到，
+   * 导完还得去翻日志。落到用户的「文档」目录里最直观。
+   */
+  async exportHtml(sessionId: string): Promise<string> {
+    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+
+    const row = this.db
+      .prepare('SELECT title FROM sessions WHERE id = ?')
+      .get(sessionId) as { title?: string } | undefined;
+    const title = sanitizeFileName(row?.title ?? '会话');
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[:T]/g, '-')
+      .replace(/\..+$/, '');
+
+    // 导出目录不存在时自己建：用户可能从没打开过「文档」
+    const dir = this.cfg.exportDir;
+    await fs.mkdir(dir, { recursive: true });
+    const outputPath = path.join(dir, `${title}-${stamp}.html`);
+
+    return await this.session!.exportSessionHtml(outputPath);
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {

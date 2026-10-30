@@ -124,9 +124,9 @@ body {
 }
 
 .notice {
-  /* 浮在内容区顶部，不占布局流 —— 否则会把会话标题/按钮挤到下一行，看着像界面错位 */
+  /* 浮在输入框上方，不盖住对话内容，也不占布局流 */
   position: absolute;
-  top: var(--space-3);
+  bottom: var(--composer-h, 92px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;

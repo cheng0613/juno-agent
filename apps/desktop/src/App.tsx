@@ -83,7 +83,8 @@ export function App() {
   // 提示条自动消失：它是个不阻塞的告知，不该让用户手动去点掉
   useEffect(() => {
     if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 3500);
+    // 给足看/复制路径的时间；5000ms 对「已导出到 C:\...\xxx.html」这种长文本才够用
+    const timer = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(timer);
   }, [notice]);
   const [interrupted, setInterrupted] = useState<InterruptedTurn[]>([]);
@@ -95,6 +96,7 @@ export function App() {
   // 正在跑的时候用户又输入的句子，排在这里，等本轮结束自动发出
   const [queued, setQueued] = useState<string[]>([]);
   const [compacting, setCompacting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -414,6 +416,19 @@ export function App() {
     [activeId, model, host],
   );
 
+  const exportHtml = useCallback(async () => {
+    if (!activeId) return;
+    setExporting(true);
+    try {
+      const filePath = await host.exportHtml(activeId);
+      setNotice(`已导出到 ${filePath}`);
+    } catch (error) {
+      setNotice(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setExporting(false);
+    }
+  }, [activeId, host]);
+
   /* 手动压缩上下文 */
   const compactNow = useCallback(async () => {
     if (!activeId || running || compacting) return;
@@ -608,6 +623,14 @@ export function App() {
               改动 {turnDiff.changes.length}
             </button>
           )}
+          <button
+            className="ghost topbar-action"
+            disabled={!activeId || messages.length === 0 || exporting}
+            title="把这段对话导出成一个 HTML 文件"
+            onClick={() => void exportHtml()}
+          >
+            {exporting ? '导出中…' : '导出'}
+          </button>
           <button
             className="ghost topbar-action"
             disabled={!activeId || running || compacting || messages.length === 0}

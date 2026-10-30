@@ -161,6 +161,9 @@ export function createMockHost(): HostBridge {
         current: 'deepseek-v4.1-flash-1017',
       };
     },
+    async exportHtml() {
+      return 'C:\\Users\\you\\Documents\\Agent 导出\\会话.html';
+    },
     async switchModel(_sessionId, modelId) {
       const listener = [...listeners].at(-1);
       listener?.({ type: 'model', modelId });
