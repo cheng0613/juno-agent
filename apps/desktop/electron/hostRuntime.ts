@@ -157,6 +157,39 @@ function historyToUiMessage(row: {
   return null;
 }
 
+/**
+ * 把引擎的英文状态翻成人话。
+ *
+ * 不是逐字翻译：「Working…」这种没用，用户已经知道它在工作。
+ * 能确认到具体工具就说得具体（「正在执行 bash」）；确认不了就保持宽松描述。
+ */
+function humanizeStatus(raw: string | undefined, toolName: string | null): string {
+  const text = (raw ?? '').toLowerCase();
+
+  if (text.includes('compact')) return '正在压缩上下文';
+  if (text.includes('thinking') || text.includes('reasoning')) return '正在思考';
+
+  if (toolName) {
+    const map: Record<string, string> = {
+      bash: '正在执行命令',
+      powershell: '正在执行命令',
+      read: '正在读文件',
+      write: '正在写文件',
+      edit: '正在改文件',
+      ls: '正在看目录',
+      grep: '正在搜索',
+      glob: '正在找文件',
+      subagent: '正在派子任务',
+      ask_user_question: '在等你回答',
+    };
+    const mapped = map[toolName];
+    if (mapped) return mapped;
+    return `正在用 ${toolName}`;
+  }
+
+  return '正在处理';
+}
+
 /** 从库里的 JSON 字符串读目录名单；坏数据一律当空，不报错 */
 function parseDirList(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -268,6 +301,10 @@ export class HostRuntime {
 
   /** 引擎推来的子任务，按 taskId 聚合成最新快照 */
   private readonly taskMap = new Map<string, TaskInfo>();
+  /** 每轮最近一次工具名，用于把状态写得具体一点 */
+  private readonly toolByTurn = new Map<string, string>();
+  /** 每轮最新的 token 用量 */
+  private readonly lastUsageTokens = new Map<string, number>();
 
   /** 可选模型清单。启动时解析一次，运行期不变 */
   private readonly catalog: ReturnType<typeof parseModelCatalog>;
@@ -707,6 +744,10 @@ export class HostRuntime {
         settled = true;
         const state = event.type === 'error' ? 'error' : 'done';
         this.emit({ type: 'turn', turnId: turn.turnId, state });
+        // 状态行必须跟着消失，否则界面上会一直挂着「正在执行命令」
+        this.emit({ type: 'status', status: null });
+        this.toolByTurn.delete(turn.turnId);
+        this.lastUsageTokens.delete(turn.turnId);
         this.activeTurnId = null;
         unsubscribe();
         this.turnUnsubs.delete(turn.turnId);
@@ -771,6 +812,11 @@ export class HostRuntime {
     switch (event.type) {
       case 'text': {
         const d = event.data as { text?: string; isFinal?: boolean };
+        // 顺手记下 token 用量，状态行要显示
+        const meta = (event as { agentMeta?: { usage?: { totalTokens?: number } } }).agentMeta;
+        if (typeof meta?.usage?.totalTokens === 'number') {
+          this.lastUsageTokens.set(turnId, meta.usage.totalTokens);
+        }
         if (d?.text) this.emit({ type: 'text', turnId, text: d.text, isFinal: d.isFinal === true });
         return;
       }
@@ -781,11 +827,14 @@ export class HostRuntime {
       }
       case 'tool_use': {
         const d = event.data as Record<string, unknown>;
+        const toolName = String(d?.toolName ?? '?');
+        // 记下来给状态行用：引擎只会说「Working…」，具体在跑什么这个更准
+        this.toolByTurn.set(turnId, toolName);
         this.emit({
           type: 'tool_use',
           turnId,
           toolUseId: String(d?.toolUseId ?? ''),
-          toolName: String(d?.toolName ?? '?'),
+          toolName,
           input: d?.input,
         });
         return;
@@ -815,6 +864,10 @@ export class HostRuntime {
           preTokens: typeof d.preTokens === 'number' ? d.preTokens : null,
           postTokens: typeof d.postTokens === 'number' ? d.postTokens : null,
         });
+        return;
+      }
+      case 'status': {
+        this.projectStatus(event, turnId);
         return;
       }
       case 'agent_task_update': {
@@ -1251,6 +1304,40 @@ export class HostRuntime {
       )
       .get(sessionId, turnIndex) as { savepoint_commit?: string | null } | undefined;
     return row?.savepoint_commit ?? null;
+  }
+
+  /**
+   * 状态行。
+   *
+   * 目的：让用户知道「它在跑什么、跑了多久」，而不是只看到一个转圈。
+   * 引擎给的 status 文本是英文（Working… / Compacting context…），
+   * 这里翻成人话；翻不了就原样透传，总比不显示强。
+   */
+  private projectStatus(event: AgentEvent, turnId: string): void {
+    const d = (event.data ?? {}) as { status?: string; isRunning?: boolean };
+    if (d.isRunning === false) {
+      this.emit({ type: 'status', status: null });
+      return;
+    }
+
+    // 本轮开始时间：优先用引擎给的第一条 running 记录，没有就现拿
+    const turn = this.turns.get(turnId);
+    const startedAt = turn?.startedAt ?? Date.now();
+    const label = humanizeStatus(d.status, this.lastToolName(turnId));
+
+    this.emit({
+      type: 'status',
+      status: {
+        label,
+        startedAt,
+        tokens: this.lastUsageTokens.get(turnId) ?? null,
+      },
+    });
+  }
+
+  /** 最近一次工具名，用来把「Working…」说得更具体 */
+  private lastToolName(turnId: string): string | null {
+    return this.toolByTurn.get(turnId) ?? null;
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {

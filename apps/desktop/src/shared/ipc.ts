@@ -208,6 +208,16 @@ export interface NavigateResult {
   filesRestoreReason?: string;
 }
 
+/** 当前这一轮正在干什么（输入框上方的状态行） */
+export interface TurnStatus {
+  /** 人话描述，如「正在执行 bash」 */
+  label: string;
+  /** 本轮已开始的毫秒时间戳（客户端算时长，不靠每秒推送） */
+  startedAt: number;
+  /** 当前上下文 token；未知则为 null */
+  tokens: number | null;
+}
+
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
   | { type: 'text'; turnId: string; text: string; isFinal: boolean }
@@ -223,6 +233,8 @@ export type HostEvent =
   | ({ type: 'turn_diff'; turnId: string } & TurnDiffPayload)
   | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean; effort: string | null; effortLevels: string[] }
   | { type: 'model'; modelId: string }
+  /** 状态变化（是否在跑 + 在干什么）；null = 已结束 */
+  | { type: 'status'; status: TurnStatus | null }
   /** 子任务进度：状态快照，UI 直接整张表替换 */
   | { type: 'tasks'; tasks: TaskInfo[] }
   | { type: 'error'; message: string };

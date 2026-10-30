@@ -4,6 +4,7 @@ import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
+import { StatusLine } from './StatusLine';
 import { TaskCard } from './TaskCard';
 import { TreePanel } from './TreePanel';import { createMockHost } from './devMock';
 import type {
@@ -18,6 +19,7 @@ import type {
   TaskInfo,
   TreeEntry,
   TurnDiffPayload,
+  TurnStatus,
   UiMessage,
 } from './shared/ipc';
 
@@ -113,6 +115,8 @@ export function App() {
   const [tree, setTree] = useState<TreeEntry[]>([]);
   const [treeOpen, setTreeOpen] = useState(false);
   const [treeBusy, setTreeBusy] = useState(false);
+  /** 当前轮的状态行；null = 没在跑 */
+  const [turnStatus, setTurnStatus] = useState<TurnStatus | null>(null);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -262,6 +266,11 @@ export function App() {
 
         case 'steer': {
           // 插话已经在发送时乐观插入了，这里只防止重复（重载后会换成库里的那条）
+          return;
+        }
+
+        case 'status': {
+          setTurnStatus(event.status);
           return;
         }
 
@@ -665,24 +674,8 @@ export function App() {
           <button className="ghost" onClick={toggleTheme}>
             {dark ? '浅色' : '深色'}
           </button>
-          {/* 只有一个模型就不摆假下拉：选择器本身也是认知负担 */}
-          {models.length > 1 ? (
-            <select
-              className="model-select"
-              value={model}
-              disabled={running}
-              title="切换模型（当前会话）"
-              onChange={(e) => void switchModelTo(e.target.value)}
-            >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="model">{model}</span>
-          )}        </div>
+          {/* 模型已显示在输入栏，侧栏不再重复 —— 小屏幕下会被遮住还添乱 */}
+        </div>
       </aside>
 
       {/* ---------------- 主区 ---------------- */}
@@ -728,71 +721,19 @@ export function App() {
           <span className="topbar-title">
             {sessions.find((s) => s.id === activeId)?.title ?? '会话'}
           </span>
-          {usage && <UsageMeter usage={usage} onCompact={() => void compactNow()} compacting={compacting} disabled={running} />}
-          <ModeControls
-            modes={modes}
-            disabled={!activeId}
-            onChange={(mode) => void changeMode(mode)}
-            onPlanToggle={(enabled) => void togglePlanMode(enabled)}
-            onEffort={(effort) => void changeEffort(effort)}
-          />
-          {turnDiff && (
-            <button
-              className="ghost topbar-action"
-              title="展开本轮文件改动"
-              onClick={() => setDiffOpen(true)}
-            >
-              改动 {turnDiff.changes.length}
-            </button>
+          {/*
+            顶栏只留「状态」，不放操作。
+            操作类控件全部移到输入框底部 —— 它们是对「这次发送」的设定，
+            应该紧贴输入位置，而不是让人在屏幕两端来回跳。
+          */}
+          {usage && (
+            <UsageMeter
+              usage={usage}
+              onCompact={() => void compactNow()}
+              compacting={compacting}
+              disabled={running}
+            />
           )}
-          <button
-            className="ghost topbar-action"
-            disabled={!activeId}
-            title="回到之前某一轮重新提问"
-            onClick={() => {
-              const next = !treeOpen;
-              setTreeOpen(next);
-              // 打开时自己拉一次，避免拿着旧树
-              if (next && activeId) {
-                void host.sessionTree(activeId).then(setTree).catch(() => setTree([]));
-              }
-            }}
-          >
-            分支
-          </button>
-          <button
-            className="ghost topbar-action"
-            disabled={!activeId}
-            title="让它也能访问别的目录"
-            onClick={() => {
-              const next = !dirsOpen;
-              setDirsOpen(next);
-              // 打开时自己拉一次：目录可能被改过（比如另一个窗口、或者重启后），
-              // 只靠 state 会把陈旧的列表给人看
-              if (next && activeId) void host.readExtraDirs(activeId).then(setExtraDirs);
-            }}
-          >
-            目录
-            {extraDirs.read.length + extraDirs.write.length > 0
-              ? ` ${extraDirs.read.length + extraDirs.write.length}`
-              : ''}
-          </button>
-          <button
-            className="ghost topbar-action"
-            disabled={!activeId || messages.length === 0 || exporting}
-            title="把这段对话导出成一个 HTML 文件"
-            onClick={() => void exportHtml()}
-          >
-            {exporting ? '导出中…' : '导出'}
-          </button>
-          <button
-            className="ghost topbar-action"
-            disabled={!activeId || running || compacting || messages.length === 0}
-            title="把较早的对话换成一页摘要，腾出上下文空间"
-            onClick={() => void compactNow()}
-          >
-            {compacting ? '压缩中…' : '压缩上下文'}
-          </button>
         </div>
 
         <div className="scroller" ref={scrollerRef}>
@@ -806,6 +747,7 @@ export function App() {
         </div>
 
         <div className="composer-wrap">
+          <StatusLine status={turnStatus} />
           {pendingImages.length > 0 && (
             <div className="attach-strip">
               {pendingImages.map((src, i) => (
@@ -873,27 +815,116 @@ export function App() {
                 }
               }}
             />
-            {running ? (
-              <>
-                <button
-                  className="ghost queue-btn"
-                  disabled={!input.trim()}
-                  title="不想打断，等这一轮跑完再发"
-                  onClick={queueInstead}
+
+            {/*
+              工具栏放在输入框内部底部 —— 这些控件都是对「这次发送」的设定，
+              应该紧贴输入位置，而不是让人在屏幕两端来回跳。
+              左边：能力类（权限/思考/模型）；右边：发送类。
+            */}
+            <div className="composer-bar">
+              <ModeControls
+                modes={modes}
+                disabled={!activeId}
+                onChange={(mode) => void changeMode(mode)}
+                onPlanToggle={(enabled) => void togglePlanMode(enabled)}
+                onEffort={(effort) => void changeEffort(effort)}
+              />
+
+              {models.length > 1 && (
+                <select
+                  className="model-select bar-select"
+                  value={model}
+                  disabled={running}
+                  title="切换模型（当前会话）"
+                  onChange={(e) => void switchModelTo(e.target.value)}
                 >
-                  排队
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {turnDiff && (
+                <button
+                  className="ghost bar-action"
+                  title="展开本轮文件改动"
+                  onClick={() => setDiffOpen(true)}
+                >
+                  改动 {turnDiff.changes.length}
                 </button>
-                <button className="send stop" onClick={() => void host.cancel(activeId ?? '')}>
-                  <span className="square" />
-                </button>
-              </>
-            ) : (
-              <button className="send" disabled={!input.trim()} onClick={() => void send()}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
+              )}
+              <button
+                className="ghost bar-action"
+                disabled={!activeId}
+                title="回到之前某一轮重新提问"
+                onClick={() => {
+                  const next = !treeOpen;
+                  setTreeOpen(next);
+                  if (next && activeId) {
+                    void host.sessionTree(activeId).then(setTree).catch(() => setTree([]));
+                  }
+                }}
+              >
+                分支
               </button>
-            )}
+              <button
+                className="ghost bar-action"
+                disabled={!activeId}
+                title="让它也能访问别的目录"
+                onClick={() => {
+                  const next = !dirsOpen;
+                  setDirsOpen(next);
+                  if (next && activeId) void host.readExtraDirs(activeId).then(setExtraDirs);
+                }}
+              >
+                目录
+                {extraDirs.read.length + extraDirs.write.length > 0
+                  ? ` ${extraDirs.read.length + extraDirs.write.length}`
+                  : ''}
+              </button>
+              <button
+                className="ghost bar-action"
+                disabled={!activeId || messages.length === 0 || exporting}
+                title="把这段对话导出成一个 HTML 文件"
+                onClick={() => void exportHtml()}
+              >
+                {exporting ? '导出中…' : '导出'}
+              </button>
+              <button
+                className="ghost bar-action"
+                disabled={!activeId || running || compacting || messages.length === 0}
+                title="把较早的对话换成一页摘要，腾出上下文空间"
+                onClick={() => void compactNow()}
+              >
+                {compacting ? '压缩中…' : '压缩'}
+              </button>
+
+              <span className="bar-spacer" />
+
+              {running ? (
+                <>
+                  <button
+                    className="ghost queue-btn"
+                    disabled={!input.trim()}
+                    title="不想打断，等这一轮跑完再发"
+                    onClick={queueInstead}
+                  >
+                    排队
+                  </button>
+                  <button className="send stop" onClick={() => void host.cancel(activeId ?? '')}>
+                    <span className="square" />
+                  </button>
+                </>
+              ) : (
+                <button className="send" disabled={!input.trim() && pendingImages.length === 0} onClick={() => void send()}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

@@ -369,9 +369,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=tree       → 验会话分支树
   //   APP_AUTOTEST=image      → 验图片输入
   //   APP_AUTOTEST=rewind     → 验文件回滚
+  //   APP_AUTOTEST=status     → 验状态行
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -402,7 +403,9 @@ app.whenReady().then(async () => {
                                 ? runImageTest(win, runtime)
                                 : mode === 'rewind'
                                   ? runRewindTest(win, runtime)
-                                  : runAutotest(win, runtime)
+                                  : mode === 'status'
+                                    ? runStatusTest(win, runtime)
+                                    : runAutotest(win, runtime)
     );
   }
 

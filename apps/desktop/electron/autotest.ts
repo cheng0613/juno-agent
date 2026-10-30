@@ -619,7 +619,7 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
   const clickCompact = () =>
     win.webContents.executeJavaScript(
       `(() => {
-         const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('压缩'));
+         const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('压缩'));
          if (!b) return 'no-btn';
          if (b.disabled) return 'disabled';
          b.click();
@@ -1353,7 +1353,7 @@ export async function runExportTest(win: BrowserWindow, runtime: HostRuntime): P
 
     const btnState = await win.webContents.executeJavaScript(
       `(() => {
-         const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('导出'));
+         const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('导出'));
          return b ? (b.disabled ? 'disabled' : 'ok') : 'missing';
        })()`,
     );
@@ -1362,7 +1362,7 @@ export async function runExportTest(win: BrowserWindow, runtime: HostRuntime): P
 
     const clicked = await win.webContents.executeJavaScript(
       `(() => {
-         const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('导出'));
+         const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('导出'));
          if (!b) return 'missing';
          b.click();
          return 'ok';
@@ -1586,7 +1586,7 @@ export async function runExtraDirsTest(win: BrowserWindow, runtime: HostRuntime)
 
     // 点开面板 —— 面板自己会重新拉一次目录列表
     await win.webContents.executeJavaScript(
-      `(() => { const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('目录')); if (b) b.click(); return 'ok'; })()`,
+      `(() => { const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('目录')); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(900);
     const panelRows = await win.webContents.executeJavaScript(
@@ -1742,7 +1742,7 @@ export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Pro
 
     // 打开面板
     await win.webContents.executeJavaScript(
-      `(() => { const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
+      `(() => { const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(900);
     const rows = await win.webContents.executeJavaScript(
@@ -2073,7 +2073,7 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     // 上面走的是 runtime API，React state 不会动。
     // 这里额外走一遍 UI 路径，确认面板会跟着清掉、对话区会重建。
     await win.webContents.executeJavaScript(
-      `(() => { const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
+      `(() => { const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(900);
     const clickedReplay = await win.webContents.executeJavaScript(
@@ -2124,6 +2124,102 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
         'utf8',
       )
       .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * 状态行验收。
+ *
+ * 必须在「正在跑」的时刻截图 —— 跑完状态行就消失了，
+ * 所以这里发一个耗时任务，中途抓图并检查 DOM。
+ */
+export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/status] ${s}`);
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  try {
+    await delay(2200);
+    await runtime.ensureSession();
+
+    // 让它跑几条命令，中间有足够的窗口抓状态行
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const ta = document.querySelector('textarea');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '用 bash 依次执行：sleep 2、sleep 2、sleep 2，每条之间用 echo 报告，最后总结');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return 'ok';
+      })()
+    `);
+    note('已发送耗时任务');
+
+    // 抓状态行：轮询直到出现
+    let seen = '';
+    let elapsedText = '';
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 60_000) {
+      const info = await win.webContents.executeJavaScript(
+        `(() => {
+           const el = document.querySelector('.status-line');
+           if (!el) return null;
+           return {
+             label: el.querySelector('.status-label') ? el.querySelector('.status-label').textContent : '',
+             meta: el.querySelector('.status-meta') ? el.querySelector('.status-meta').textContent : '',
+           };
+         })()`,
+      );
+      if (info) {
+        seen = info.label;
+        elapsedText = info.meta;
+        note(`状态行: label=${JSON.stringify(info.label)} meta=${JSON.stringify(info.meta)}`);
+        await delay(2500); // 等两秒让时长数字走起来
+        const later = await win.webContents.executeJavaScript(
+          `document.querySelector('.status-meta') ? document.querySelector('.status-meta').textContent : ''`,
+        );
+        note(`两秒后 meta: ${JSON.stringify(later)}`);
+        await shootTo(win, '36-status');
+        note('截图 36-status');
+        break;
+      }
+      await delay(200);
+    }
+
+    if (!seen) throw new Error('没抓到状态行');
+
+    // 跑完后必须消失
+    const waitStart = Date.now();
+    while (turnsDone === 0 && Date.now() - waitStart < 180_000) await delay(300);
+    await delay(1500);
+    const stillThere = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.status-line').length`,
+    );
+    note(`轮结束后状态行数量: ${stillThere}`);
+    if (stillThere !== 0) throw new Error('轮结束后状态行没消失');
+
+    await fs.writeFile(
+      path.join(outDir, 'status-result.json'),
+      JSON.stringify({ ok: true, label: seen, meta: elapsedText, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-status-failed').catch(() => undefined);
   } finally {
     await delay(400);
     app.quit();
