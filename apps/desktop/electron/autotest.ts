@@ -1965,3 +1965,167 @@ export async function runImageTest(win: BrowserWindow, runtime: HostRuntime): Pr
     app.quit();
   }
 }
+
+/**
+ * 文件回滚验收（Phase 15 补的那一半）。
+ *
+ * Phase 15 只做了对话分支回退，磁盘文件没退 —— 用户会以为「回退=撤销」。
+ * 这里验的是：退回某一轮之后，**那一轮改过的文件真的回到旧内容**。
+ *
+ * 做法：工作目录初始化成 git 仓库 → 第一轮记下基线 → 第二轮让它改文件 →
+ * 回退到第二轮之前 → 文件必须变回旧内容。
+ */
+export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/rewind] ${s}`);
+  };
+
+  let turnsDone = 0;
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn' && e.state !== 'running') turnsDone += 1;
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  const typeAndSend = (text: string) => `
+    (() => {
+      const ta = document.querySelector('textarea');
+      if (!ta) return 'no-textarea';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, ${JSON.stringify(text)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return 'ok';
+    })()`;
+
+  try {
+    await delay(2200);
+    const sessionId = await runtime.ensureSession();
+    const cwd = process.env.APP_WORKDIR ?? '';
+
+    // 初始化 git 仓库并提交一个已知文件
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const run = promisify(execFile);
+    await run('git', ['init'], { cwd, windowsHide: true }).catch(() => undefined);
+    const target = path.join(cwd, 'target.txt');
+    await fs.writeFile(target, 'ORIGINAL', 'utf8');
+    await run('git', ['add', '-A'], { cwd, windowsHide: true });
+    await run(
+      'git',
+      ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init'],
+      { cwd, windowsHide: true },
+    ).catch(() => undefined);
+    note(`已初始化仓库，target.txt = ORIGINAL`);
+
+    // 第一轮：只是问个问题，不改文件（这一轮会产生基线快照）
+    await win.webContents.executeJavaScript(typeAndSend('只回答「好」，不要做任何事'));
+    await waitFor(() => turnsDone >= 1, 180_000, '第一轮');
+    await delay(800);
+
+    // 第二轮：让它改文件
+    turnsDone = 0;
+    await win.webContents.executeJavaScript(
+      typeAndSend(`用 bash 把 ${cwd.split(path.sep).join('/')}/target.txt 的内容改成 MODIFIED`),
+    );
+    await waitFor(() => turnsDone >= 1, 180_000, '第二轮');
+    await delay(1200);
+
+    const afterEdit = await fs.readFile(target, 'utf8').catch(() => '');
+    note(`改完后 target.txt = ${JSON.stringify(afterEdit)}`);
+    if (!afterEdit.includes('MODIFIED')) {
+      throw new Error(`模型没改成功，无法验证回滚。实际内容: ${JSON.stringify(afterEdit)}`);
+    }
+
+    // 打开分支面板，回退到第二轮之前（最后一个 user 节点的 turnIndex）
+    const tree = await runtime.sessionTree(sessionId);
+    const userNodes: Array<{ id: string; turnIndex?: number; preview: string }> = [];
+    const walk = (list: Array<{ id: string; role?: string; turnIndex?: number; preview: string; children: unknown[] }>) => {
+      for (const node of list) {
+        if (node.role === 'user') userNodes.push({ id: node.id, turnIndex: node.turnIndex, preview: node.preview });
+        walk((node.children as typeof list) ?? []);
+      }
+    };
+    walk(tree as never);
+    note(`user 节点: ${JSON.stringify(userNodes.map((n) => ({ idx: n.turnIndex, p: n.preview.slice(0, 14) })))}`);
+
+    const second = userNodes.find((n) => n.turnIndex === 1);
+    if (!second) throw new Error(`找不到第二轮节点，实际: ${JSON.stringify(userNodes)}`);
+
+    const result = await runtime.navigateTree(sessionId, second.id, second.turnIndex);
+    note(`回退结果: filesRestored=${result.filesRestored} / ${result.filesRestoreReason ?? '无原因'}`);
+    await delay(800);
+
+    const afterRewind = await fs.readFile(target, 'utf8').catch(() => '<文件已不存在>');
+    note(`回退后 target.txt = ${JSON.stringify(afterRewind)}`);
+
+    // 上面走的是 runtime API，React state 不会动。
+    // 这里额外走一遍 UI 路径，确认面板会跟着清掉、对话区会重建。
+    await win.webContents.executeJavaScript(
+      `(() => { const b = [...document.querySelectorAll('.topbar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(900);
+    const clickedReplay = await win.webContents.executeJavaScript(
+      `(() => {
+         const all = [...document.querySelectorAll('.tree-replay')];
+         const b = all[all.length - 1];
+         if (!b) return 'missing';
+         b.click();
+         return 'ok';
+       })()`,
+    );
+    note(`UI 点重来: ${clickedReplay}`);
+    await delay(1800);
+
+    const bubbles = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.bubble-ai, .row-user').length`,
+    );
+    const diffPanel = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.diff-panel').length`,
+    );
+    note(`回退后对话气泡数: ${bubbles} / 改动面板数: ${diffPanel}`);
+
+    await shootTo(win, '35-rewind');
+    note('截图 35-rewind');
+
+    if (!result.filesRestored) {
+      throw new Error(`文件没回滚：${result.filesRestoreReason ?? '无原因'}`);
+    }
+    if (!afterRewind.includes('ORIGINAL')) {
+      throw new Error(`文件内容没回到 ORIGINAL，实际: ${JSON.stringify(afterRewind)}`);
+    }
+    if (bubbles < 1) throw new Error('回退后对话区是空的');
+    if (diffPanel !== 0) throw new Error('回退后改动面板没清掉，会显示已回滚的改动');
+
+    await fs.writeFile(
+      path.join(outDir, 'rewind-result.json'),
+      JSON.stringify({ ok: true, afterEdit, afterRewind, filesRestored: result.filesRestored, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-rewind-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'rewind-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

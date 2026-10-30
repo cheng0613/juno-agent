@@ -216,4 +216,13 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE sessions ADD COLUMN extra_write_dirs TEXT NOT NULL DEFAULT '[]';
     `,
   },
+  {
+    version: 5,
+    name: 'turn-savepoint',
+    // 每轮开始前的工作区快照 commit。回退时用它把文件恢复到那一刻。
+    // 存在 turns 表上而不是单独建表：一顿一快照，天然 1:1。
+    sql: `
+      ALTER TABLE turns ADD COLUMN savepoint_commit TEXT;
+    `,
+  },
 ];

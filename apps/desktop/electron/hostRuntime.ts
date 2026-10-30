@@ -52,6 +52,7 @@ import {
   type DiffBaseline,
 } from './turnDiff.js';
 import { parseModelCatalog } from './modelCatalog.js';
+import { createSavepoint, restoreSavepoint } from './gitSavepoint.js';
 import { saveImageAttachment, type SavedImage } from './imageAttachment.js';
 
 export interface HostConfig {
@@ -662,6 +663,21 @@ export class HostRuntime {
     );
     this.maybeTitleSession(sessionId);
 
+    // 拍快照：必须在 send 之前。send 一返回模型就可能开始改文件，
+    // 晚一步拍到的已经是「改过之后」了，回退就没意义。
+    // 失败不阻断发送 —— 没有快照只是不能回退文件，对话仍然能用。
+    const savepoint = await createSavepoint(this.cfg.workDir, sessionId).catch(
+      (error: unknown) => ({
+        commit: null,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    if (savepoint.commit) {
+      this.turns.setSavepoint(turn.turnId, savepoint.commit);
+    } else {
+      logger.debug('savepoint 未创建，文件回滚将不可用', { reason: savepoint.reason });
+    }
+
     // 上一轮还没收口就来了新 send：旧订阅要先拆掉，否则它会继续吃新一轮的事件，
     // 把新事件写到旧 turnId 名下。同时如实把旧轮收成 interrupted，
     // 免得库里留一条永远 running 的行、下次启动误报「未完成」。
@@ -1095,6 +1111,26 @@ export class HostRuntime {
     const snapshot = await this.session!.getSessionTree();
     const active = new Set(snapshot.activePathIds);
 
+    /**
+     * 给 user 节点编轮次号。
+     *
+     * 不能按遍历顺序编：pi 的 roots 是新到旧的，遍历出来是倒序（踩过）。
+     * 按 timestamp 排序才是时间序。没有 timestamp 的节点排到末尾，
+     * 宁可它拿不到快照，也不要错位到别的轮上。
+     */
+    const userTimestamps: Array<{ id: string; ts: number }> = [];
+    const collect = (node: Record<string, unknown>): void => {
+      if (node.kind === 'message' && node.role === 'user') {
+        const ts = Date.parse(String(node.timestamp ?? '')) || 0;
+        userTimestamps.push({ id: String(node.id ?? ''), ts });
+      }
+      for (const child of (node.children as Array<Record<string, unknown>>) ?? []) collect(child);
+    };
+    for (const root of snapshot.roots as unknown as Array<Record<string, unknown>>) collect(root);
+    userTimestamps.sort((a, b) => a.ts - b.ts);
+    const turnIndexOf = new Map<string, number>();
+    userTimestamps.forEach((entry, index) => turnIndexOf.set(entry.id, index));
+
     const convert = (node: Record<string, unknown>, isRoot: boolean): TreeEntry | null => {
       const kind = typeof node.kind === 'string' ? node.kind : 'unknown';
       const children = ((node.children as Array<Record<string, unknown>>) ?? [])
@@ -1120,12 +1156,16 @@ export class HostRuntime {
         };
       }
 
+      const nodeId = String(node.id ?? '');
       return {
-        id: String(node.id ?? ''),
+        id: nodeId,
         kind,
-        role: typeof node.role === 'string' ? node.role : undefined,
+        role,
         preview: typeof node.preview === 'string' ? node.preview : '',
-        active: active.has(String(node.id ?? '')),
+        active: active.has(nodeId),
+        ...(role === 'user' && turnIndexOf.has(nodeId)
+          ? { turnIndex: turnIndexOf.get(nodeId)! }
+          : {}),
         children,
       };
     };
@@ -1145,8 +1185,41 @@ export class HostRuntime {
    * 引擎会把选中 user 消息的原文放回编辑器，用户改完再发就长出新枝。
    * 所以这里把 draftText 一并带回去 —— 不返回的话用户得自己回忆刚才问的什么。
    */
-  async navigateTree(sessionId: string, entryId: string): Promise<NavigateResult> {
+  /**
+   * 回到某个节点重来（含文件回滚）。
+   *
+   * 顺序很重要：**先恢复文件，再切对话**。
+   * 反过来的话，切完对话失败会留下「对话退了、文件没退」 —— 最坏的情况。
+   * 而且恢复失败时直接中止，不切对话，两者保持一致。
+   */
+  async navigateTree(
+    sessionId: string,
+    entryId: string,
+    turnIndex?: number,
+  ): Promise<NavigateResult> {
     if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+
+    // 找到那一轮开始前的快照并恢复。
+    // 没有快照（非 git 目录 / 老会话）就只回退对话，并如实告知。
+    let filesRestored = false;
+    let filesRestoreReason: string | undefined;
+    if (typeof turnIndex === 'number') {
+      const commit = this.savepointByTurnIndex(sessionId, turnIndex);
+      if (!commit) {
+        filesRestoreReason = '这轮没有文件快照（工作目录不是 git 仓库，或会话太早）';
+      } else {
+        const restored = await restoreSavepoint(this.cfg.workDir, commit);
+        filesRestored = restored.ok;
+        if (!restored.ok) {
+          filesRestoreReason = restored.reason;
+          // 回滚失败就不切对话：宁可什么都不变，也不要留下半套状态
+          throw new Error(`文件回滚失败，已保持原状：${restored.reason ?? '未知原因'}`);
+        }
+      }
+    } else {
+      filesRestoreReason = '没有指定轮次，只回退对话';
+    }
+
     const result = await this.session!.navigateSessionTree(entryId, { summarize: false });
     if (result.cancelled) throw new Error('切换被取消');
 
@@ -1165,7 +1238,19 @@ export class HostRuntime {
       draftText: result.draftText,
       activeCount: result.tree.activePathIds.length,
       messages,
+      filesRestored,
+      ...(filesRestoreReason ? { filesRestoreReason } : {}),
     };
+  }
+
+  /** 第 N 轮（从 0 起）对应的文件快照 */
+  private savepointByTurnIndex(sessionId: string, turnIndex: number): string | null {
+    const row = this.db
+      .prepare(
+        'SELECT savepoint_commit FROM turns WHERE session_id = ? ORDER BY rowid ASC LIMIT 1 OFFSET ?',
+      )
+      .get(sessionId, turnIndex) as { savepoint_commit?: string | null } | undefined;
+    return row?.savepoint_commit ?? null;
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {

@@ -252,8 +252,8 @@ function registerIpc(): void {
     return runtime!.sessionTree(sessionId);
   });
 
-  ipcMain.handle(IPC.navigateTree, async (_e, sessionId: string, entryId: string) => {
-    return runtime!.navigateTree(sessionId, entryId);
+  ipcMain.handle(IPC.navigateTree, async (_e, sessionId: string, entryId: string, turnIndex?: number) => {
+    return runtime!.navigateTree(sessionId, entryId, turnIndex);
   });
 
   ipcMain.handle(IPC.stopTask, async (_e, sessionId: string, taskId: string) => {
@@ -368,9 +368,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=dirs       → 验额外工作目录
   //   APP_AUTOTEST=tree       → 验会话分支树
   //   APP_AUTOTEST=image      → 验图片输入
+  //   APP_AUTOTEST=rewind     → 验文件回滚
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -399,7 +400,9 @@ app.whenReady().then(async () => {
                               ? runTreeTest(win, runtime)
                               : mode === 'image'
                                 ? runImageTest(win, runtime)
-                                : runAutotest(win, runtime)
+                                : mode === 'rewind'
+                                  ? runRewindTest(win, runtime)
+                                  : runAutotest(win, runtime)
     );
   }
 

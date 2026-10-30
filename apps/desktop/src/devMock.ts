@@ -201,6 +201,7 @@ export function createMockHost(): HostBridge {
         draftText: '第一句提问',
         activeCount: 1,
         messages: [{ id: 'm1', role: 'user' as const, text: '第一句提问' }],
+        filesRestored: true,
       };
     },
     async switchModel(_sessionId, modelId) {

@@ -5,8 +5,7 @@ import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
 import { TaskCard } from './TaskCard';
-import { TreePanel } from './TreePanel';
-import { createMockHost } from './devMock';
+import { TreePanel } from './TreePanel';import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
   ContextUsage,
@@ -449,11 +448,11 @@ export function App() {
    * 只切不回填的话，用户得自己回忆刚才问的什么，等于白回退。
    */
   const replayFrom = useCallback(
-    async (entryId: string) => {
+    async (entryId: string, turnIndex?: number) => {
       if (!activeId || treeBusy) return;
       setTreeBusy(true);
       try {
-        const result = await host.navigateTree(activeId, entryId);
+        const result = await host.navigateTree(activeId, entryId, turnIndex);
         // 用引擎给的时间线，不从数据库重拉 ——
         // 库里还存着被丢弃那一支的消息，重拉会把它们又显示出来
         setMessages(result.messages);
@@ -462,6 +461,17 @@ export function App() {
         setScrollTick((n) => n + 1);
         if (result.draftText) setInput(result.draftText);
         setTreeOpen(false);
+        // 回退后旧的改动面板/子任务不再对应当前状态：
+        // 文件已经恢复到那一剂，还显示「+1 -1」会让人以为改还没来得及退
+        setTurnDiff(null);
+        setDiffOpen(false);
+        setTasks([]);
+        // 文件是否也回滚了，必须告诉用户 —— 他很可能以为「退回去=撤销了」
+        if (result.filesRestored) {
+          setNotice('已回到那一刻，磁盘文件也一并恢复');
+        } else if (result.filesRestoreReason) {
+          setNotice(`已回到那一刻，但文件没有回滚：${result.filesRestoreReason}`);
+        }
         // 回退后上下文变了，占用条也要重算
         void host.contextUsage(activeId).then(setUsage);
       } catch (error) {
@@ -903,7 +913,7 @@ export function App() {
           <TreePanel
             roots={tree}
             busy={treeBusy}
-            onNavigate={(entryId) => void replayFrom(entryId)}
+            onNavigate={(entryId, turnIndex) => void replayFrom(entryId, turnIndex)}
             onClose={() => setTreeOpen(false)}
           />
         )}

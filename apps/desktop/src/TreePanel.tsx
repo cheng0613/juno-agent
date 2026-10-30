@@ -17,7 +17,7 @@ export function TreePanel({
 }: {
   roots: TreeEntry[];
   busy: boolean;
-  onNavigate: (entryId: string) => void;
+  onNavigate: (entryId: string, turnIndex?: number) => void;
   onClose: () => void;
 }) {
   return (
@@ -53,7 +53,7 @@ function TreeRow({
   node: TreeEntry;
   depth: number;
   busy: boolean;
-  onNavigate: (entryId: string) => void;
+  onNavigate: (entryId: string, turnIndex?: number) => void;
 }) {
   const [open, setOpen] = useState(true);
   const isUser = node.role === 'user';
@@ -85,7 +85,7 @@ function TreeRow({
             className="tree-replay"
             disabled={busy}
             title="退回到这里，并把这句原话放回输入框"
-            onClick={() => onNavigate(node.id)}
+            onClick={() => onNavigate(node.id, node.turnIndex)}
           >
             重来
           </button>

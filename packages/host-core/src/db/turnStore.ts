@@ -163,6 +163,33 @@ export class TurnStore {
     return row ? toTurn(row) : null;
   }
 
+  /** 记下这一轮开始时的工作区快照 */
+  setSavepoint(turnId: string, commit: string): void {
+    this.db.prepare('UPDATE turns SET savepoint_commit = ? WHERE id = ?').run(commit, turnId);
+  }
+
+  getSavepoint(turnId: string): string | null {
+    const row = this.db
+      .prepare('SELECT savepoint_commit FROM turns WHERE id = ?')
+      .get(turnId) as { savepoint_commit?: string | null } | undefined;
+    return row?.savepoint_commit ?? null;
+  }
+
+  /**
+   * 找出「某条用户消息所属那一轮」的快照 commit。
+   *
+   * 回退到某条消息时要恢复的是**那一轮开始前**的状态，
+   * 所以拿 turn 的 savepoint，而不是当前轮的。
+   */
+  savepointForUserClientId(sessionId: string, userClientId: string): string | null {
+    const row = this.db
+      .prepare(
+        'SELECT savepoint_commit FROM turns WHERE session_id = ? AND user_client_id = ? LIMIT 1',
+      )
+      .get(sessionId, userClientId) as { savepoint_commit?: string | null } | undefined;
+    return row?.savepoint_commit ?? null;
+  }
+
   list(sessionId: string, limit = 20): TurnRecord[] {
     // 同一毫秒内可能创建多轮（重试/连发），必须用 rowid 兜底保证稳定次序
     const rows = this.db

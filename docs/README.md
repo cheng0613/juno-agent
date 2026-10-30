@@ -17,6 +17,7 @@
 - [Phase 2](./PHASE2-REPORT.md) — SQLite 6 表、迁移、中断恢复
 - [Phase 4](./PHASE4-REPORT.md) — 打包分发 + 中断续跑
 - [Phase 14](./PHASE14-REPORT.md) — 额外工作目录（migration v4）
+- [Phase 17](./PHASE17-REPORT.md) — 文件回滚（git savepoint）
 
 ### 交互
 - [Phase 5](./PHASE5-REPORT.md) — 会话标题、权限记忆、输入队列
@@ -46,6 +47,7 @@
 | 思考档位「声明支持、点了报错」 | 能力声明了 6 档，但宿主没传 `APP_EFFORTS`，pi 只放行 `low` | [10](./PHASE10-REPORT.md) |
 | 手动压缩永远 noop | pi 有内置下限，小会话必定拒绝；配置降不下来 | [6](./PHASE6-REPORT.md) |
 | 回退后对话区全空 | 引擎的 `content` 有对象和裸字符串两种形状，只认一种就吃掉了所有内容 | [15](./PHASE15-REPORT.md) |
+| 回退轮次编号是倒的 | pi 的树 `roots` 是新到旧排列，按遍历顺序编号会静默错位到别的轮 | [17](./PHASE17-REPORT.md) |
 | Fast mode 是假开关 | `setFastMode` 只记偏好不验证；deepseek 不在 `fastModels` 里 | [10](./PHASE10-REPORT.md) |
 
 ### 宿主侧
@@ -85,3 +87,4 @@
 | 子任务 | 模型真拆出 3 个并发任务 |
 | 图片 | 发纯红图，模型必须说「红色」 |
 | 分支树 | 退回后历史重建、再发能长出新枝 |
+| 文件回滚 | `target.txt` 从 `MODIFIED` 真的变回 `ORIGINAL` |

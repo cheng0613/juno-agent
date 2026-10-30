@@ -182,6 +182,12 @@ export interface TreeEntry {
   preview: string;
   /** 是否在当前活动路径上 */
   active: boolean;
+  /**
+   * 第几轮（从 0 起）。只有 user 节点有。
+   * 用于回退时找到那一轮对应的文件快照 —— 引擎的树节点 id 与我们的 turn
+   * 没有直接映射，但两者都是时间序，按序号对齐是可靠的。
+   */
+  turnIndex?: number;
   children: TreeEntry[];
 }
 
@@ -196,6 +202,10 @@ export interface NavigateResult {
    * 那里不知道分支结构，会把已被丢弃的支也显示出来。
    */
   messages: UiMessage[];
+  /** 文件是否回滚了；false = 这个目录不是 git 仓库（或快照不可用） */
+  filesRestored: boolean;
+  /** 没回滚时的原因，用于告知用户 */
+  filesRestoreReason?: string;
 }
 
 /** 宿主 → 渲染 的事件 */
@@ -311,7 +321,7 @@ export interface HostBridge {
   /** 弹系统目录选择框；取消返回 null */
   pickDir(): Promise<string | null>;
   sessionTree(sessionId: string): Promise<TreeEntry[]>;
-  navigateTree(sessionId: string, entryId: string): Promise<NavigateResult>;
+  navigateTree(sessionId: string, entryId: string, turnIndex?: number): Promise<NavigateResult>;
   readModes(sessionId: string): Promise<ModeState>;
   onEvent(listener: (event: HostEvent) => void): () => void;
 }
