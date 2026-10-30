@@ -1525,3 +1525,152 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
 }
+
+/* ============ 设置面板 ============ */
+/* 首次启动：全屏遮住，配好才能用 */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  padding: var(--space-6);
+}
+.settings-overlay > .settings-head,
+.settings-overlay > .settings-body,
+.settings-overlay > .settings-actions {
+  width: min(520px, 100%);
+}
+
+/* 运行中：右侧抽屉 */
+.settings-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  width: min(440px, 70%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-elevated);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.settings-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.settings-title {
+  margin: 0;
+  font-size: var(--text-20);
+  line-height: var(--text-20-lh);
+  color: var(--text-primary);
+}
+.settings-sub {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-13);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+.settings-close {
+  margin-left: auto;
+  font-size: var(--text-16);
+  line-height: 1;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.settings-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+.settings-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 0 var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.settings-section { display: flex; flex-direction: column; gap: var(--space-2); }
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.settings-label {
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  color: var(--text-secondary);
+  font-weight: var(--font-medium);
+}
+.settings-badge {
+  margin-left: auto;
+  font-size: var(--text-11);
+  line-height: var(--text-11-lh);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+}
+.settings-badge.ok { background: var(--success-soft); color: var(--success); }
+.settings-badge.warn { background: var(--warning-soft); color: var(--warning); }
+
+.settings-input {
+  width: 100%;
+  font: inherit;
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+}
+.settings-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+.settings-textarea { resize: vertical; font-family: var(--font-mono); }
+
+.settings-hint {
+  margin: 0;
+  font-size: var(--text-11);
+  line-height: var(--leading-relaxed);
+  color: var(--text-tertiary);
+}
+.settings-hint.warn { color: var(--warning); }
+.settings-hint code { font-family: var(--font-mono); word-break: break-all; }
+
+.settings-advanced {
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+}
+.settings-advanced > summary {
+  cursor: pointer;
+  padding: var(--space-1) 0;
+  list-style: none;
+}
+.settings-advanced > summary::-webkit-details-marker { display: none; }
+.settings-advanced > summary::before { content: '▸ '; color: var(--text-tertiary); }
+.settings-advanced[open] > summary::before { content: '▾ '; }
+.settings-advanced > *:not(summary) { margin-top: var(--space-2); }
+
+.settings-test {
+  margin: 0;
+  font-size: var(--text-12);
+  line-height: var(--leading-relaxed);
+}
+.settings-test.ok { color: var(--success); }
+.settings-test.err { color: var(--danger); }
+.settings-test-time { color: var(--text-tertiary); }
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}

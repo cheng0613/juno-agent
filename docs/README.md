@@ -35,6 +35,7 @@
 - [Phase 4](./PHASE4-REPORT.md) — NSIS 打包、asar 瘦身
 - [Phase 18](./PHASE18-REPORT.md) — 操作台布局 + 状态行
 - [Phase 19](./PHASE19-REPORT.md) — 样式体系对齐 Cindy
+- [Phase 20](./PHASE20-REPORT.md) — 配置持久化 + 首次启动向导
 
 ---
 
@@ -72,6 +73,7 @@
 | 切换模型「全绿」其实没切 | 用的假模型 id 端点不校验，验的是「没报错」不是「真换了」 | [11](./PHASE11-REPORT.md) |
 | 圆角全变尖、气泡变直角 | CSS 变量自引用形成循环，值变无效 | [19](./PHASE19-REPORT.md) |
 | Tailwind 配了但静默不生效 | `viteBuild({configFile})` 路径下 `css.postcss` 没被读到 | [19](./PHASE19-REPORT.md) |
+| 双击 exe 报 `no_key` | key 只能靠环境变量传，没有配置入口 | [20](./PHASE20-REPORT.md) |
 
 **一句话总结**：看到「不对劲」先看数据，别看像素；看到「全绿」先问一句「它到底验了什么」。
 

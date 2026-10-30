@@ -36,6 +36,10 @@ const bridge: HostBridge = {
   readExtraDirs: (sessionId) => ipcRenderer.invoke(IPC.readExtraDirs, sessionId),
   setExtraDirs: (sessionId, dirs) => ipcRenderer.invoke(IPC.setExtraDirs, sessionId, dirs),
   pickDir: () => ipcRenderer.invoke(IPC.pickDir),
+  readSettings: () => ipcRenderer.invoke(IPC.readSettings),
+  saveSettings: (input) => ipcRenderer.invoke(IPC.saveSettings, input),
+  testSettings: (input) => ipcRenderer.invoke(IPC.testSettings, input),
+  restartApp: () => ipcRenderer.invoke(IPC.restartApp),
   sessionTree: (sessionId) => ipcRenderer.invoke(IPC.sessionTree, sessionId),
   navigateTree: (sessionId, entryId, turnIndex) =>
     ipcRenderer.invoke(IPC.navigateTree, sessionId, entryId, turnIndex),

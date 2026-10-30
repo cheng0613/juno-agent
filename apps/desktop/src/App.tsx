@@ -4,6 +4,7 @@ import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
+import { SettingsPanel } from './SettingsPanel';
 import { StatusLine } from './StatusLine';
 import { TaskCard } from './TaskCard';
 import { TreePanel } from './TreePanel';import { createMockHost } from './devMock';
@@ -117,6 +118,9 @@ export function App() {
   const [treeBusy, setTreeBusy] = useState(false);
   /** 当前轮的状态行；null = 没在跑 */
   const [turnStatus, setTurnStatus] = useState<TurnStatus | null>(null);
+  /** 设置面板：没 key 时全屏拦截，否则是侧边抽屉 */
+  const [settingsMode, setSettingsMode] = useState<'onboarding' | 'drawer' | null>(null);
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
   /** 上下文占用；null = 引擎没给，此时不画进度条 */
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
@@ -157,6 +161,15 @@ export function App() {
   /* ---------------- 首次拉状态 ---------------- */
   useEffect(() => {
     void (async () => {
+      // 先看配置：没 key 就直接进向导，不去连引擎（连也一定失败）
+      const settings = await host.readSettings().catch(() => null);
+      const configured = settings?.hasKey ?? true;
+      setHasKey(configured);
+      if (!configured) {
+        setSettingsMode('onboarding');
+        return;
+      }
+
       const boot = await host.bootstrap();
       setSessions(boot.sessions);
       setActiveId(boot.activeSessionId);
@@ -647,6 +660,19 @@ export function App() {
 
   return (
     <div className="shell">
+      {/* 首次启动没 key：全屏拦截，不让人看着界面发不了消息 */}
+      {settingsMode === 'onboarding' && (
+        <SettingsPanel
+          host={host}
+          mode="onboarding"
+          onSaved={() => {
+            // 配置只在启动时读，保存后重启才能生效
+            setHasKey(true);
+            void host.restartApp();
+          }}
+        />
+      )}
+
       {/* ---------------- 侧边栏 ---------------- */}
       <aside className="sidebar">
         <div className="sidebar-head">
@@ -674,9 +700,28 @@ export function App() {
           <button className="ghost" onClick={toggleTheme}>
             {dark ? '浅色' : '深色'}
           </button>
-          {/* 模型已显示在输入栏，侧栏不再重复 —— 小屏幕下会被遮住还添乱 */}
+          <button
+            className="ghost"
+            title="设置（模型、密钥、审批策略）"
+            onClick={() => setSettingsMode('drawer')}
+          >
+            设置
+          </button>
         </div>
       </aside>
+
+      {settingsMode === 'drawer' && (
+        <SettingsPanel
+          host={host}
+          mode="drawer"
+          onClose={() => setSettingsMode(null)}
+          onSaved={() => {
+            setSettingsMode(null);
+            // 提示需要重启，而不是默默不生效
+            setNotice('已保存；重启应用后生效');
+          }}
+        />
+      )}
 
       {/* ---------------- 主区 ---------------- */}
       <main className="main">

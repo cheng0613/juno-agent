@@ -53,6 +53,14 @@ export const IPC = {
   setExtraDirs: 'host:set-extra-dirs',
   /** 渲染 → 主：弹目录选择框 */
   pickDir: 'host:pick-dir',
+  /** 渲染 → 主：拿当前配置状态（不返回 key 本身） */
+  readSettings: 'host:read-settings',
+  /** 渲染 → 主：保存配置 */
+  saveSettings: 'host:save-settings',
+  /** 渲染 → 主：测试配置是否可用 */
+  testSettings: 'host:test-settings',
+  /** 渲染 → 主：重启应用使配置生效 */
+  restartApp: 'host:restart-app',
   /** 渲染 → 主：读会话分支树 */
   sessionTree: 'host:session-tree',
   /** 渲染 → 主：回到某个节点重来 */
@@ -218,6 +226,50 @@ export interface TurnStatus {
   tokens: number | null;
 }
 
+/** 配置状态（不含 key 明文） */
+export interface SettingsState {
+  /** 是否已经配了 key */
+  hasKey: boolean;
+  /** key 是否加密存储 */
+  keyEncrypted: boolean;
+  /** 当前系统是否支持加密（false 时保存会明文） */
+  encryptionAvailable: boolean;
+  model: string;
+  endpoint: string;
+  api: string;
+  contextWindow: number;
+  models: string;
+  efforts: string;
+  approval: 'ipc' | 'allow';
+  workDir: string;
+  /** key 是来自环境变量还是本地设置 */
+  keySource: 'env' | 'file' | 'none';
+  /** 配置文件路径，方便用户查看 */
+  settingsPath: string;
+}
+
+/** 保存时提交的内容 */
+export interface SettingsInput {
+  apiKey?: string;
+  model?: string;
+  endpoint?: string;
+  api?: string;
+  contextWindow?: number;
+  models?: string;
+  efforts?: string;
+  approval?: 'ipc' | 'allow';
+  workDir?: string;
+}
+
+/** 连通性测试结果 */
+export interface TestResult {
+  ok: boolean;
+  /** 失败原因或成功摘要 */
+  message: string;
+  /** 测试耗时 */
+  elapsedMs: number;
+}
+
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
   | { type: 'text'; turnId: string; text: string; isFinal: boolean }
@@ -332,6 +384,10 @@ export interface HostBridge {
   setExtraDirs(sessionId: string, dirs: ExtraDirs): Promise<void>;
   /** 弹系统目录选择框；取消返回 null */
   pickDir(): Promise<string | null>;
+  readSettings(): Promise<SettingsState>;
+  saveSettings(input: SettingsInput): Promise<{ encrypted: boolean }>;
+  testSettings(input: SettingsInput): Promise<TestResult>;
+  restartApp(): Promise<void>;
   sessionTree(sessionId: string): Promise<TreeEntry[]>;
   navigateTree(sessionId: string, entryId: string, turnIndex?: number): Promise<NavigateResult>;
   readModes(sessionId: string): Promise<ModeState>;

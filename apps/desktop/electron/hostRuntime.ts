@@ -74,33 +74,64 @@ export interface HostConfig {
   approval: 'ipc' | 'allow';
   /** 导出 HTML 的落地目录 */
   exportDir: string;
+  /** 模型 key；来自环境变量或本地设置。pi 子进程靠它认证 */
+  apiKey?: string;
+  /** 多模型清单（JSON 字符串）；与 APP_MODELS 同格式 */
+  modelsJson?: string;
 }
 
-export function configFromEnv(): HostConfig {
+export interface EnvOverrides {
+  apiKey?: string;
+  model?: string;
+  endpoint?: string;
+  api?: string;
+  contextWindow?: number;
+  models?: string;
+  efforts?: string;
+  approval?: 'ipc' | 'allow';
+  workDir?: string;
+}
+
+/**
+ * 构造宿主配置。
+ *
+ * 优先级：环境变量 > 本地配置文件 > 内置默认值。
+ * 环境变量优先是为了 CI / 脚本注入不被本地文件覆盖。
+ */
+export function configFromEnv(file: EnvOverrides = {}): HostConfig {
   const dataDir =
     process.env.APP_DATA_DIR ?? path.join(os.tmpdir(), 'spike-desktop');
+  const pick = (envName: string, fileValue: string | undefined, fallback: string): string =>
+    process.env[envName]?.trim() || fileValue?.trim() || fallback;
+
   return {
     upstreamRoot:
       process.env.APP_UPSTREAM_ROOT ??
       'C:/Users/chiaki/Desktop/agent/upstream/cindy',
     binaryPath: process.env.APP_PI_BINARY,
-    model: process.env.APP_MODEL ?? 'deepseek-v4.1-flash-1017',
-    endpoint: process.env.APP_ENDPOINT ?? 'https://tokenhub.tencentmaas.com/v1',
-    api: (process.env.APP_API ?? 'openai-completions') as PiNativeApi,
-    contextWindow: Number(process.env.APP_CONTEXT_WINDOW ?? 200_000),
+    model: pick('APP_MODEL', file.model, 'deepseek-v4.1-flash-1017'),
+    endpoint: pick('APP_ENDPOINT', file.endpoint, 'https://tokenhub.tencentmaas.com/v1'),
+    api: pick('APP_API', file.api, 'openai-completions') as PiNativeApi,
+    contextWindow: Number(
+      process.env.APP_CONTEXT_WINDOW ?? file.contextWindow ?? 200_000,
+    ),
     compactionPct: process.env.APP_COMPACT_PCT
       ? Number(process.env.APP_COMPACT_PCT)
       : undefined,
-    efforts: (process.env.APP_EFFORTS ?? '')
+    efforts: pick('APP_EFFORTS', file.efforts, '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean) as Effort[],
     dataDir,
-    workDir: process.env.APP_WORKDIR ?? path.join(dataDir, 'workspace'),
+    workDir:
+      process.env.APP_WORKDIR?.trim() || file.workDir?.trim() || path.join(dataDir, 'workspace'),
     agentHome: process.env.APP_AGENT_HOME ?? path.join(dataDir, 'pi-agent-home'),
-    approval: (process.env.APP_APPROVAL ?? 'ipc') as 'ipc' | 'allow',
-    // 默认落到系统临时目录下的 exports；main 会用真正的「文档」目录覆盖
+    approval: (pick('APP_APPROVAL', file.approval, 'ipc') as 'ipc' | 'allow'),
     exportDir: process.env.APP_EXPORT_DIR ?? path.join(dataDir, 'exports'),
+    /** 给 pi 子进程的 key；环境变量没配就用设置里的 */
+    apiKey: process.env.APP_PI_API_KEY?.trim() || file.apiKey?.trim() || undefined,
+    /** 多模型清单（JSON 字符串），运行期解析 */
+    modelsJson: process.env.APP_MODELS?.trim() || file.models?.trim() || undefined,
   };
 }
 
@@ -1031,6 +1062,11 @@ export class HostRuntime {
   }
 
   /** 可选模型清单 + 当前模型 */
+  /** 可选模型清单 + 当前模型 */
+  currentModel(): string {
+    return this.cfg.model;
+  }
+
   listModels(): { models: Array<{ id: string; label: string }>; current: string } {
     return {
       models: this.catalog.entries.map((m) => ({ id: m.id, label: m.label })),

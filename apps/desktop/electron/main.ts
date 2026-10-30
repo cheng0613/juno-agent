@@ -11,6 +11,7 @@ import { promises as fs } from 'node:fs';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
+import { readSettings, writeSettings, hasStoredKey, encryptionAvailable, settingsFilePath } from './settingsStore.js';
 import {
   IPC,
   type ApproveInput,
@@ -18,6 +19,9 @@ import {
   type ExtraDirs,
   type PermissionModeChoice,
   type SendInput,
+  type SettingsInput,
+  type SettingsState,
+  type TestResult,
 } from '../src/shared/ipc.js';
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
@@ -146,7 +150,7 @@ async function bootstrap(): Promise<BootstrapResult> {
     activeSessionId: sessionId,
     messages: await mapRowsToUi(rows),
     interruptedTurns: rt.interruptedTurns(),
-    model: configFromEnv().model,
+    model: rt.currentModel(),
   };
 }
 
@@ -162,7 +166,7 @@ function registerIpc(): void {
       activeSessionId: id,
       messages: [],
       interruptedTurns: rt.interruptedTurns(),
-      model: configFromEnv().model,
+      model: rt.currentModel(),
     };
   });
 
@@ -278,6 +282,78 @@ function registerIpc(): void {
     return picked.canceled ? null : (picked.filePaths[0] ?? null);
   });
 
+  ipcMain.handle(IPC.readSettings, async (): Promise<SettingsState> => {
+    const saved = await readSettings();
+    const { hasKey, encrypted } = await hasStoredKey();
+    const envKey = process.env.APP_PI_API_KEY?.trim();
+    return {
+      hasKey: Boolean(envKey) || hasKey,
+      keyEncrypted: encrypted,
+      encryptionAvailable: encryptionAvailable(),
+      keySource: envKey ? 'env' : hasKey ? 'file' : 'none',
+      model: configFromEnv(saved).model,
+      endpoint: configFromEnv(saved).endpoint,
+      api: configFromEnv(saved).api,
+      contextWindow: configFromEnv(saved).contextWindow,
+      models: saved.models ?? '',
+      efforts: saved.efforts ?? '',
+      approval: configFromEnv(saved).approval,
+      workDir: configFromEnv(saved).workDir,
+      settingsPath: settingsFilePath(),
+    };
+  });
+
+  ipcMain.handle(IPC.saveSettings, async (_e, input: SettingsInput) => {
+    const result = await writeSettings(input);
+    // 不进 process.env 同步：重启后才生效，避免运行中的会话拿到半新半旧的配置
+    return result;
+  });
+
+  ipcMain.handle(
+    IPC.testSettings,
+    async (_e, input: SettingsInput): Promise<TestResult> => {
+      const startedAt = Date.now();
+      const saved = await readSettings();
+      const key = input.apiKey?.trim() || process.env.APP_PI_API_KEY?.trim() || saved.apiKey?.trim();
+      const endpoint = input.endpoint?.trim() || saved.endpoint || configFromEnv().endpoint;
+      const model = input.model?.trim() || saved.model || configFromEnv().model;
+
+      if (!key) {
+        return { ok: false, message: '还没填 API Key', elapsedMs: Date.now() - startedAt };
+      }
+
+      // 只验「能不能带这个 key 拿到模型列表」，不真跑一轮对话：
+      // 测试要快，而发一轮动辄几秒、还会计费。
+      try {
+        const resp = await fetch(`${endpoint.replace(/\/$/, '')}/models`, {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(15_000),
+        });
+        const elapsedMs = Date.now() - startedAt;
+        if (resp.ok) {
+          return { ok: true, message: `连接正常（${model}）`, elapsedMs };
+        }
+        // 401/403 说明 key 不对；其它状态码说明地址可能写错
+        const detail = resp.status === 401 || resp.status === 403
+          ? 'Key 无效或没权限'
+          : `端点返回 ${resp.status}`;
+        return { ok: false, message: detail, elapsedMs };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : String(error),
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(IPC.restartApp, async () => {
+    // 配置只在启动时读一次，重启是最简单可靠的生效方式
+    app.relaunch();
+    app.exit(0);
+  });
+
   // 只在自动化验收时开的后门：伪造一条穿透引擎的压缩边界。
   // pi 的手动压缩有内置下限，小会话永远 noop，用真实 API 堆到那个量级不经济；
   // 而我们要验的「事件→落库→渲染」那半条链路，能用一个真实事件完整跑一遍。
@@ -338,8 +414,16 @@ app.whenReady().then(async () => {
     process.env.APP_DATA_DIR ??= app.getPath('userData');
   }
 
+  // 读本地设置。key 存在这里时注入 process.env，
+  // 因为底层 auth adapter 只认环境变量 —— 与其改整条链路，不如在入口对齐。
+  // 环境变量已存在时不覆盖（CI / 脚本注入优先）。
+  const settings = await readSettings();
+  if (settings.apiKey && !process.env.APP_PI_API_KEY) {
+    process.env.APP_PI_API_KEY = settings.apiKey;
+  }
+
   runtime = new HostRuntime({
-    ...configFromEnv(),
+    ...configFromEnv(settings),
     // 导出的 HTML 落到用户能找到的地方（文档目录），而不是 app 数据目录深处
     exportDir: process.env.APP_EXPORT_DIR ?? path.join(app.getPath('documents'), 'Agent 导出'),
   });
@@ -370,9 +454,10 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=image      → 验图片输入
   //   APP_AUTOTEST=rewind     → 验文件回滚
   //   APP_AUTOTEST=status     → 验状态行
+  //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -405,7 +490,9 @@ app.whenReady().then(async () => {
                                   ? runRewindTest(win, runtime)
                                   : mode === 'status'
                                     ? runStatusTest(win, runtime)
-                                    : runAutotest(win, runtime)
+                                    : mode === 'settings'
+                                      ? runSettingsTest(win, runtime)
+                                      : runAutotest(win, runtime)
     );
   }
 

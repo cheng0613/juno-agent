@@ -175,6 +175,30 @@ export function createMockHost(): HostBridge {
     async pickDir() {
       return 'C:\\Users\\you\\Documents\\some-project';
     },
+    async readSettings() {
+      return {
+        hasKey: true,
+        keyEncrypted: true,
+        encryptionAvailable: true,
+        model: 'deepseek-v4.1-flash-1017',
+        endpoint: 'https://tokenhub.tencentmaas.com/v1',
+        api: 'openai-completions',
+        contextWindow: 200_000,
+        models: '',
+        efforts: '',
+        approval: 'ipc' as const,
+        workDir: 'C:\\tmp\\workspace',
+        keySource: 'file' as const,
+        settingsPath: 'C:\\Users\\you\\AppData\\Roaming\\juno\\settings.json',
+      };
+    },
+    async saveSettings() {
+      return { encrypted: true };
+    },
+    async testSettings() {
+      return { ok: true, message: '连接正常（模拟）', elapsedMs: 42 };
+    },
+    async restartApp() {},
     async sessionTree() {
       return [
         {

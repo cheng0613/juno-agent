@@ -2225,3 +2225,102 @@ export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): P
     app.quit();
   }
 }
+
+/**
+ * 设置持久化验收。
+ *
+ * 验的是「别人装完能不能用」这条路：
+ *   1. 没有 key 时必须是全屏向导，不能是「看着能用但发不出消息」
+ *   2. 填完保存后，key 真的落盘了
+ *   3. 落盘的是加密的（不是明文）
+ */
+export async function runSettingsTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/settings] ${s}`);
+  };
+
+  try {
+    await delay(2500);
+
+    // 1) 向导是否出现
+    const overlay = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.settings-overlay').length`,
+    );
+    note(`全屏向导数量: ${overlay}`);
+    await shootTo(win, '37-settings-onboarding');
+    note('截图 37-settings-onboarding');
+
+    if (overlay < 1) throw new Error('没 key 时没有出现配置向导');
+
+    // 2) 填 key 并保存
+    const filled = await win.webContents.executeJavaScript(`
+      (() => {
+        const inputs = [...document.querySelectorAll('.settings-input')];
+        const keyInput = inputs.find(i => i.type === 'password');
+        if (!keyInput) return 'no-key-input';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(keyInput, 'sk-test-key-for-autotest-only');
+        keyInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const modelInput = inputs.find(i => i.placeholder && i.placeholder.includes('deepseek'));
+        if (modelInput) {
+          setter.call(modelInput, 'deepseek-v4.1-flash-1017');
+          modelInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return 'ok';
+      })()
+    `);
+    note(`填表: ${filled}`);
+    await delay(500);
+    await shootTo(win, '38-settings-filled');
+    note('截图 38-settings-filled');
+
+    // 3) 直接调 IPC 保存（点按钮会触发重启，测试里不适合真重启）
+    const saved = await win.webContents.executeJavaScript(
+      `window.host.saveSettings({ apiKey: 'sk-test-key-for-autotest-only', model: 'deepseek-v4.1-flash-1017' })`,
+    );
+    note(`保存结果: ${JSON.stringify(saved)}`);
+    await delay(400);
+
+    // 4) 文件是否落盘、是否加密
+    const state = await win.webContents.executeJavaScript(`window.host.readSettings()`);
+    note(`读回状态: hasKey=${state.hasKey} encrypted=${state.keyEncrypted} path=${state.settingsPath}`);
+
+    const raw = await fs.readFile(String(state.settingsPath), 'utf8').catch(() => '');
+    note(`配置文件大小: ${raw.length} 字节`);
+    const plainLeak = raw.includes('sk-test-key-for-autotest-only');
+    const hasEnc = raw.includes('apiKeyEnc');
+    note(`明文泄漏: ${plainLeak} / 含加密字段: ${hasEnc}`);
+
+    if (!state.hasKey) throw new Error('保存后读不到 key');
+    if (plainLeak) throw new Error('key 以明文写进了配置文件');
+    if (state.encryptionAvailable && !hasEnc) throw new Error('系统支持加密但没加密保存');
+
+    // 清理：把测试配置删掉，避免影响后续测试
+    await fs.unlink(String(state.settingsPath)).catch(() => undefined);
+
+    await fs.writeFile(
+      path.join(outDir, 'settings-result.json'),
+      JSON.stringify({ ok: true, overlay, saved, encrypted: state.keyEncrypted, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-settings-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'settings-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
