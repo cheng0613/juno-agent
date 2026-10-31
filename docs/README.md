@@ -30,6 +30,9 @@
 - [Phase 13](./PHASE13-REPORT.md) — 子任务进度
 - [Phase 16](./PHASE16-REPORT.md) — 图片输入
 
+### 产品层
+- [Phase 24](./PHASE24-REPORT.md) — 会话管理（重命名/置顶/归档/删除）
+
 ### 外壳
 - [Phase 3](./PHASE3-REPORT.md) — Electron + IPC + 对话 UI
 - [Phase 4](./PHASE4-REPORT.md) — NSIS 打包、asar 瘦身

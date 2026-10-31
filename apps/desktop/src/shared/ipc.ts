@@ -62,6 +62,20 @@ export const IPC = {
   /** 渲染 → 主：重启应用使配置生效 */
   restartApp: 'host:restart-app',
   /** 渲染 → 主：读会话分支树 */
+  /** 渲染 → 主：重命名会话 */
+  renameSession: 'host:rename-session',
+  /** 渲染 → 主：置顶/取消置顶 */
+  pinSession: 'host:pin-session',
+  /** 渲染 → 主：归档会话 */
+  archiveSession: 'host:archive-session',
+  /** 渲染 → 主：从归档恢复 */
+  unarchiveSession: 'host:unarchive-session',
+  /** 渲染 → 主：列出已归档会话 */
+  listArchived: 'host:list-archived',
+  /** 渲染 → 主：彻底删除会话（不可恢复） */
+  deleteSession: 'host:delete-session',
+  /** 渲染 → 主：只列会话（排序 / 置顶变化后重拉） */
+  listSessions: 'host:list-sessions',
   sessionTree: 'host:session-tree',
   /** 渲染 → 主：回到某个节点重来 */
   navigateTree: 'host:navigate-tree',
@@ -117,6 +131,18 @@ export interface SessionSummary {
   model: string;
   status: string;
   updatedAt: number;
+  /** 置顶的排在列表最前 */
+  pinned?: boolean;
+}
+
+/** 已归档的会话 */
+export interface ArchivedSession {
+  id: string;
+  title: string;
+  model: string;
+  status: string;
+  updatedAt: number;
+  archivedAt: number;
 }
 
 export interface BootstrapResult {
@@ -392,6 +418,13 @@ export interface HostBridge {
   saveSettings(input: SettingsInput): Promise<{ encrypted: boolean }>;
   testSettings(input: SettingsInput): Promise<TestResult>;
   restartApp(): Promise<void>;
+  renameSession(sessionId: string, title: string): Promise<void>;
+  pinSession(sessionId: string, pinned: boolean): Promise<void>;
+  archiveSession(sessionId: string): Promise<void>;
+  unarchiveSession(sessionId: string): Promise<void>;
+  listArchived(): Promise<ArchivedSession[]>;
+  deleteSession(sessionId: string): Promise<void>;
+  listSessions(): Promise<SessionSummary[]>;
   sessionTree(sessionId: string): Promise<TreeEntry[]>;
   navigateTree(sessionId: string, entryId: string, turnIndex?: number): Promise<NavigateResult>;
   readModes(sessionId: string): Promise<ModeState>;

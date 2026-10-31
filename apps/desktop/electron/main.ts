@@ -349,6 +349,30 @@ function registerIpc(): void {
     },
   );
 
+  ipcMain.handle(IPC.renameSession, async (_e, sessionId: string, title: string) => {
+    runtime!.renameSession(sessionId, title);
+  });
+
+  ipcMain.handle(IPC.pinSession, async (_e, sessionId: string, pinned: boolean) => {
+    runtime!.setSessionPinned(sessionId, pinned);
+  });
+
+  ipcMain.handle(IPC.archiveSession, async (_e, sessionId: string) => {
+    runtime!.archiveSession(sessionId);
+  });
+
+  ipcMain.handle(IPC.unarchiveSession, async (_e, sessionId: string) => {
+    runtime!.unarchiveSession(sessionId);
+  });
+
+  ipcMain.handle(IPC.listArchived, async () => runtime!.listArchivedSessions());
+
+  ipcMain.handle(IPC.deleteSession, async (_e, sessionId: string) => {
+    runtime!.deleteSession(sessionId);
+  });
+
+  ipcMain.handle(IPC.listSessions, async () => runtime!.listSessions());
+
   ipcMain.handle(IPC.restartApp, async () => {
     // 配置只在启动时读一次，重启是最简单可靠的生效方式
     app.relaunch();
@@ -470,7 +494,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -513,6 +537,8 @@ app.whenReady().then(async () => {
                                         ? runWatchdogTest(win, runtime)
                                       : mode === 'window'
                                         ? runWindowStateTest(win, runtime)
+                                      : mode === 'session'
+                                        ? runSessionOrgTest(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

@@ -4,6 +4,7 @@ import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
+import { SessionItem } from './SessionItem';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusLine } from './StatusLine';
 import { TaskCard } from './TaskCard';
@@ -630,6 +631,75 @@ export function App() {
     setDirsOpen(false);
   };
 
+  /* ---------------- 会话管理 ---------------- */
+
+  /** 重命名：只改本地列表，不重拉 —— 改名不影响会话内容 */
+  const renameSession = useCallback(
+    async (sessionId: string, title: string) => {
+      try {
+        await host.renameSession(sessionId, title);
+        setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title } : s)));
+      } catch (error) {
+        setNotice(`重命名失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [host],
+  );
+
+  /** 置顶：要重拉列表，因为排序变了 */
+  const pinSession = useCallback(
+    async (sessionId: string, pinned: boolean) => {
+      try {
+        await host.pinSession(sessionId, pinned);
+        setSessions(await host.listSessions());
+      } catch (error) {
+        setNotice(`操作失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [host],
+  );
+
+  /**
+   * 归档：从侧栏移走，但可恢复。
+   * 归档的是当前会话时要切到另一个，否则界面会挂在一个已归档会话上。
+   */
+  const archiveSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await host.archiveSession(sessionId);
+        const remaining = await host.listSessions();
+        setSessions(remaining);
+        if (sessionId === activeId) {
+          const next = remaining[0];
+          if (next) await switchSession(next.id);
+          else setActiveId(null);
+        }
+      } catch (error) {
+        setNotice(`归档失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [host, activeId, switchSession],
+  );
+
+  /** 彻底删除：不可恢复，UI 已做过二次确认 */
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await host.deleteSession(sessionId);
+        const remaining = await host.listSessions();
+        setSessions(remaining);
+        if (sessionId === activeId) {
+          const next = remaining[0];
+          if (next) await switchSession(next.id);
+          else setActiveId(null);
+        }
+      } catch (error) {
+        setNotice(`删除失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    [host, activeId, switchSession],
+  );
+
   const newSession = async () => {
     const boot = await host.createSession();
     setSessions(boot.sessions);
@@ -702,13 +772,16 @@ export function App() {
 
         <nav className="session-list">
           {sessions.map((s) => (
-            <button
+            <SessionItem
               key={s.id}
-              className={`session-item${s.id === activeId ? ' active' : ''}`}
-              onClick={() => void switchSession(s.id)}
-            >
-              <span className="session-title">{s.title}</span>
-            </button>
+              session={s}
+              active={s.id === activeId}
+              onSelect={() => void switchSession(s.id)}
+              onRename={(title) => void renameSession(s.id, title)}
+              onPin={(pinned) => void pinSession(s.id, pinned)}
+              onArchive={() => void archiveSession(s.id)}
+              onDelete={() => void deleteSession(s.id)}
+            />
           ))}
         </nav>
 

@@ -29,6 +29,7 @@
 | Phase 21 | 错误边界（D 类） | [报告](./docs/PHASE21-REPORT.md) |
 | Phase 22 | 卡住提示（D 类） | [报告](./docs/PHASE22-REPORT.md) |
 | Phase 23 | 窗口记忆 + 干净机器验证（D 类） | [报告](./docs/PHASE23-REPORT.md) |
+| Phase 24 | 会话管理（B 类） | [报告](./docs/PHASE24-REPORT.md) |
 
 报告索引与踩坑汇总见 [docs/README.md](./docs/README.md)。
 
@@ -162,7 +163,7 @@ node dist/selftest.js        # 6/6
 | `APP_EXPORT_DIR` | `%USERPROFILE%/Documents/Agent 导出` | 导出 HTML 的落地目录 |
 | `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
-| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化；`restart` = 验保存即重启；`error` = 验错误边界；`watchdog` = 验卡住提示；`window` = 验窗口记忆 |
+| `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化；`restart` = 验保存即重启；`error` = 验错误边界；`watchdog` = 验卡住提示；`window` = 验窗口记忆；`session` = 验会话管理 |
 
 > 渲染层在没有 `window.host` 时自动用 `devMock`，所以直接用浏览器打开 `dist/index.html` 也能看 UI。
 
@@ -230,6 +231,7 @@ node dist/selftest.js        # 6/6
 - 卡住提示：工具执行中（sleep 8 超过阈值）不误报；真无响应时 spinner 停下并变色
 - 窗口记忆：保存真实尺寸、最大化记还原后尺寸、屏幕外位置被丢弃
 - 打包版：完整跑通一轮对话（11 段流式 / 4 条消息 / 数据库 114KB）
+- 会话管理：重命名生效、置顶排序变化、归档可恢复、删除需二次确认
 - 打包：NSIS 安装包 135 MB，打包后的 exe 完整跑通一轮对话
 
 **未验证**

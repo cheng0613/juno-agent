@@ -2721,3 +2721,175 @@ export async function runWindowStateTest(win: BrowserWindow, runtime: HostRuntim
     app.quit();
   }
 }
+
+/**
+ * 会话管理验收。
+ *
+ * 验五件事：重命名、置顶（排序变化）、归档（从列表消失）、恢复、彻底删除。
+ *
+ * 重点在「删除」：
+ *   - 必须二次确认，不能一点就删
+ *   - 删了之后会话和它的对话真的没了
+ */
+export async function runSessionOrgTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/session] ${s}`);
+  };
+
+  try {
+    await delay(2500);
+
+    // 通过 UI 建会话（点侧栏「+ 新会话」），这样 React 的列表也会更新。
+    // 直接调 runtime.createSession 的话界面不知道，后面验不了会话项。
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('.btn-new'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(900);
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('.btn-new'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(900);
+
+    const current = await runtime.listSessions();
+    note(`UI 建出 ${current.length} 个会话: ${current.map((x) => x.title).join(', ')}`);
+    if (current.length < 2) throw new Error(`UI 建会话后列表只有 ${current.length} 个`);
+    const a = current[1]!.id;
+    const b = current[0]!.id;
+    note(`拿前两个做测试: ${a.slice(0, 8)} / ${b.slice(0, 8)}`);
+
+    /* ---- 1. 重命名 ---- */
+    runtime.renameSession(a, '改过名的甲');
+    await delay(300);
+    let list = await runtime.listSessions();
+    const renamed = list.find((s) => s.id === a);
+    note(`重命名后: ${renamed?.title}`);
+    if (renamed?.title !== '改过名的甲') throw new Error(`重命名没生效: ${renamed?.title}`);
+
+    // 空标题应被拒绝
+    let rejected = false;
+    try {
+      runtime.renameSession(a, '   ');
+    } catch {
+      rejected = true;
+    }
+    note(`空标题被拒绝: ${rejected}`);
+    if (!rejected) throw new Error('空标题没被拒绝');
+
+    /* ---- 2. 置顶：排序要变 ---- */
+    // 先确认默认顺序（按 updated_at，乙更新所以在前）
+    const beforePin = (await runtime.listSessions()).map((s) => s.id);
+    note(`置顶前顺序: ${beforePin.map((i) => (i === a ? '甲' : i === b ? '乙' : '?')).join(' > ')}`);
+
+    runtime.setSessionPinned(a, true);
+    await delay(300);
+    const afterPin = await runtime.listSessions();
+    note(`置顶后顺序: ${afterPin.map((s) => (s.id === a ? '甲' : s.id === b ? '乙' : '?')).join(' > ')}`);
+    if (afterPin[0]?.id !== a) throw new Error('置顶的会话没排到最前');
+    if (afterPin[0]?.pinned !== true) throw new Error('pinned 标记没返回');
+
+    runtime.setSessionPinned(a, false);
+    await delay(200);
+
+    /* ---- 3. 归档：从列表消失，但能从归档列表找回 ---- */
+    runtime.archiveSession(b);
+    await delay(300);
+    list = await runtime.listSessions();
+    note(`归档后列表: ${list.map((s) => s.title).join(', ')}`);
+    if (list.some((s) => s.id === b)) throw new Error('归档的会话还在列表里');
+
+    const archived = runtime.listArchivedSessions();
+    note(`归档列表: ${archived.map((s) => s.title).join(', ')}`);
+    if (!archived.some((s) => s.id === b)) throw new Error('归档列表里找不到');
+
+    /* ---- 4. 恢复 ---- */
+    runtime.unarchiveSession(b);
+    await delay(300);
+    list = await runtime.listSessions();
+    note(`恢复后列表: ${list.map((s) => s.title).join(', ')}`);
+    if (!list.some((s) => s.id === b)) throw new Error('恢复后没回到列表');
+
+    /* ---- 5. 打开 UI 看会话项和菜单 ---- */
+    await win.webContents.executeJavaScript(`window.host.listSessions()`);
+    // 让 React 重新拉一次：切一下会话
+    await win.webContents.executeJavaScript(
+      `(() => { const b = [...document.querySelectorAll('[data-testid="session-item"] button')][0]; if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(800);
+
+    const itemCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="session-item"]').length`,
+    );
+    note(`界面会话项数: ${itemCount}`);
+    await shootTo(win, '44-session-list');
+    note('截图 44-session-list');
+
+    if (itemCount < 1) throw new Error('界面上没有会话项');
+
+    // 打开菜单
+    const menuOpened = await win.webContents.executeJavaScript(`
+      (() => {
+        const btn = document.querySelector('[data-testid="session-menu-btn"]');
+        if (!btn) return 'no-btn';
+        btn.click();
+        return 'ok';
+      })()
+    `);
+    note(`打开菜单: ${menuOpened}`);
+    await delay(400);
+    const menuItems = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="session-menu"] button').length`,
+    );
+    note(`菜单项数: ${menuItems}`);
+    await shootTo(win, '45-session-menu');
+    note('截图 45-session-menu');
+    if (menuItems < 3) throw new Error(`菜单项太少: ${menuItems}`);
+
+    // 点删除应先进确认态，而不是直接删
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('[data-testid="session-menu-delete"]'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(400);
+    const hasConfirm = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="session-delete-confirm"]').length`,
+    );
+    note(`删除确认按钮出现: ${hasConfirm}`);
+    await shootTo(win, '46-session-delete-confirm');
+    note('截图 46-session-delete-confirm');
+
+    if (hasConfirm < 1) throw new Error('点删除没有二次确认，直接删了');
+
+    /* ---- 6. 真正删除 ---- */
+    const beforeCount = (await runtime.listSessions()).length;
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('[data-testid="session-delete-confirm"]'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(800);
+    const afterCount = (await runtime.listSessions()).length;
+    note(`删除前 ${beforeCount} 个 → 删除后 ${afterCount} 个`);
+    if (afterCount >= beforeCount) throw new Error('删除没生效');
+
+    await fs.writeFile(
+      path.join(outDir, 'session-result.json'),
+      JSON.stringify({ ok: true, itemCount, menuItems, hasConfirm, beforeCount, afterCount, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-session-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'session-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

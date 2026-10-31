@@ -1553,14 +1553,23 @@ export class HostRuntime {
     // 注意：status 不在 SessionMeta 里 —— 上游刻意把运行态从 SessionMeta 剔除了
     // （见 maker-core/interfaces/session-storage.ts 末尾的注释）。
     // 持久态 status 归产品层，所以这里直接读我们自己的 sessions 表。
+    //
+    // 排序：置顶的永远在前（按置顶时间新→旧），其余按最近活动。
+    // 不能只按 updated_at —— 置顶就是为了让它不被新会话挤下去。
     const rows = this.db
-      .prepare('SELECT id, title, model, status, updated_at FROM sessions ORDER BY updated_at DESC')
+      .prepare(
+        `SELECT id, title, model, status, updated_at, pinned_at
+           FROM sessions
+          WHERE archived_at IS NULL
+          ORDER BY pinned_at IS NULL, pinned_at DESC, updated_at DESC`,
+      )
       .all() as Array<{
       id: string;
       title: string;
       model: string;
       status: string;
       updated_at: number;
+      pinned_at: number | null;
     }>;
     return rows.map((r) => ({
       id: r.id,
@@ -1568,7 +1577,82 @@ export class HostRuntime {
       model: r.model,
       status: r.status,
       updatedAt: r.updated_at,
+      pinned: r.pinned_at !== null,
     }));
+  }
+
+  /** 重命名。空标题不改 —— 避免误操作把名字清成空白 */
+  renameSession(sessionId: string, title: string): void {
+    const trimmed = title.trim();
+    if (!trimmed) throw new Error('标题不能为空');
+    if (trimmed.length > 120) throw new Error('标题太长（上限 120 字）');
+    // 不动 updated_at：改名不是「有新活动」，否则侧栏会自己跳位
+    this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(trimmed, sessionId);
+  }
+
+  /** 置顶 / 取消置顶 */
+  setSessionPinned(sessionId: string, pinned: boolean): void {
+    this.db
+      .prepare('UPDATE sessions SET pinned_at = ? WHERE id = ?')
+      .run(pinned ? Date.now() : null, sessionId);
+  }
+
+  /**
+   * 归档会话。
+   *
+   * 用归档而不是直接删除：删错了整个会话的对话就永久没了。
+   * 归档还能找回，而且不再出现在侧栏。
+   */
+  archiveSession(sessionId: string): void {
+    // 归档正在用的会话时先解绑，避免后续操作写到已归档会话上
+    if (this.session?.id === sessionId) this.session = null;
+    this.db
+      .prepare('UPDATE sessions SET archived_at = ? WHERE id = ?')
+      .run(Date.now(), sessionId);
+  }
+
+  /** 从归档恢复 */
+  unarchiveSession(sessionId: string): void {
+    this.db.prepare('UPDATE sessions SET archived_at = NULL WHERE id = ?').run(sessionId);
+  }
+
+  /** 列出已归档的会话（供恢复用） */
+  listArchivedSessions() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, title, model, status, updated_at, archived_at
+           FROM sessions
+          WHERE archived_at IS NOT NULL
+          ORDER BY archived_at DESC`,
+      )
+      .all() as Array<{
+      id: string;
+      title: string;
+      model: string;
+      status: string;
+      updated_at: number;
+      archived_at: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title || '未命名',
+      model: r.model,
+      status: r.status,
+      updatedAt: r.updated_at,
+      archivedAt: r.archived_at,
+    }));
+  }
+
+  /**
+   * 彻底删除会话（不可恢复）。
+   *
+   * messages / turns / usage_events 靠外键 CASCADE 一起删
+   * （open.ts 里开了 foreign_keys，不开的话级联会静默失效）。
+   * 破坏性操作，UI 层必须二次确认。
+   */
+  deleteSession(sessionId: string): void {
+    if (this.session?.id === sessionId) this.session = null;
+    this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
   async shutdown(): Promise<void> {

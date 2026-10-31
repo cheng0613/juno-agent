@@ -40,6 +40,13 @@ const bridge: HostBridge = {
   saveSettings: (input) => ipcRenderer.invoke(IPC.saveSettings, input),
   testSettings: (input) => ipcRenderer.invoke(IPC.testSettings, input),
   restartApp: () => ipcRenderer.invoke(IPC.restartApp),
+  renameSession: (sessionId, title) => ipcRenderer.invoke(IPC.renameSession, sessionId, title),
+  pinSession: (sessionId, pinned) => ipcRenderer.invoke(IPC.pinSession, sessionId, pinned),
+  archiveSession: (sessionId) => ipcRenderer.invoke(IPC.archiveSession, sessionId),
+  unarchiveSession: (sessionId) => ipcRenderer.invoke(IPC.unarchiveSession, sessionId),
+  listArchived: () => ipcRenderer.invoke(IPC.listArchived),
+  deleteSession: (sessionId) => ipcRenderer.invoke(IPC.deleteSession, sessionId),
+  listSessions: () => ipcRenderer.invoke(IPC.listSessions),
   sessionTree: (sessionId) => ipcRenderer.invoke(IPC.sessionTree, sessionId),
   navigateTree: (sessionId, entryId, turnIndex) =>
     ipcRenderer.invoke(IPC.navigateTree, sessionId, entryId, turnIndex),

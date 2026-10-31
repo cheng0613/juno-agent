@@ -199,6 +199,17 @@ export function createMockHost(): HostBridge {
       return { ok: true, message: '连接正常（模拟）', elapsedMs: 42 };
     },
     async restartApp() {},
+    async renameSession() {},
+    async pinSession() {},
+    async archiveSession() {},
+    async unarchiveSession() {},
+    async listArchived() {
+      return [];
+    },
+    async deleteSession() {},
+    async listSessions() {
+      return [];
+    },
     async sessionTree() {
       return [
         {

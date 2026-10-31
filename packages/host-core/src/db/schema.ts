@@ -225,4 +225,15 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE turns ADD COLUMN savepoint_commit TEXT;
     `,
   },
+  {
+    version: 6,
+    name: 'session-organize',
+    // 会话整理：置顶 + 归档。
+    // 归档而不是硬删：用户删错一个会话就永久失去所有对话，太重。
+    // 默认列表只显示未归档的，归档的在另一处可找回。
+    sql: `
+      ALTER TABLE sessions ADD COLUMN pinned_at INTEGER;
+      ALTER TABLE sessions ADD COLUMN archived_at INTEGER;
+    `,
+  },
 ];
