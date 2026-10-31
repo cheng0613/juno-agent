@@ -85,6 +85,8 @@ export function App() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [liveText, setLiveText] = useState('');
   const [running, setRunning] = useState(false);
+  /** 哪些会话正在跑（多会话并行时侧栏要显示出来） */
+  const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   // 审批时是否记住这次选择；每次新审批重新开始
   const [remember, setRemember] = useState<'none' | 'session' | 'global'>('none');
@@ -258,6 +260,26 @@ export function App() {
         }
 
         case 'turn': {
+          // 多会话并行：先判断这条事件属不属于当前会话。
+          // 不判断的话，后台会话跑完会把当前会话的 running 置 false ——
+          // 界面显示「跑完了」，其实当前会话还在跑。
+          const isCurrent = event.sessionId === activeRef.current;
+
+          // 侧栏的运行标记按 sessionId 记，与当前会话无关
+          setBusySessions((prev) => {
+            const next = new Set(prev);
+            if (event.state === 'running') next.add(event.sessionId);
+            else next.delete(event.sessionId);
+            return next;
+          });
+
+          if (!isCurrent) {
+            // 后台会话：只更新侧栏标记。
+            // 它跑完时顺手刷一下列表 —— 标题可能刚被自动生成，排序也变了
+            if (event.state !== 'running') void host.listSessions().then(setSessions);
+            return;
+          }
+
           if (event.state === 'running') {
             setRunning(true);
             liveRef.current = '';
@@ -276,7 +298,6 @@ export function App() {
           }
           return;
         }
-
         case 'approval': {
           setRemember('none');
           setApproval(event.request);
@@ -796,6 +817,7 @@ export function App() {
               key={s.id}
               session={s}
               active={s.id === activeId}
+              busy={busySessions.has(s.id)}
               onSelect={() => void switchSession(s.id)}
               onRename={(title) => void renameSession(s.id, title)}
               onPin={(pinned) => void pinSession(s.id, pinned)}

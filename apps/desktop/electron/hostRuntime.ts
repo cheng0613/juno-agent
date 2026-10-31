@@ -826,13 +826,13 @@ export class HostRuntime {
       this.turnUnsubs.get(stale)?.();
       this.turnUnsubs.delete(stale);
       this.recorder.finish(stale, 'interrupted');
-      this.emit({ type: 'turn', turnId: stale, state: 'interrupted' });
+      this.emit({ type: 'turn', sessionId, turnId: stale, state: 'interrupted' });
       logger.warn('send 被新消息顶掉，上一轮已标为 interrupted', { stale });
     }
 
     this.activeTurns.set(sessionId, turn.turnId);
     this.activeTurnSessionId = sessionId;
-    this.emit({ type: 'turn', turnId: turn.turnId, state: 'running' });
+    this.emit({ type: 'turn', sessionId, turnId: turn.turnId, state: 'running' });
 
     // 同一轮可能收到多个终态事件（引擎的 done 与会话收口事件），
     // 收口只能通知一次 —— 渲染层依赖它去重拉历史、去推进队列
@@ -847,7 +847,7 @@ export class HostRuntime {
       if (event.turnScope !== 'background' && isTerminalTurnEvent(event)) {
         settled = true;
         const state = event.type === 'error' ? 'error' : 'done';
-        this.emit({ type: 'turn', turnId: turn.turnId, state });
+        this.emit({ type: 'turn', sessionId, turnId: turn.turnId, state });
         // 状态行必须跟着消失，否则界面上会一直挂着「正在执行命令」
         this.emit({ type: 'status', status: null });
         this.toolByTurn.delete(turn.turnId);
@@ -1595,7 +1595,7 @@ export class HostRuntime {
     const session = this.sessions.get(sessionId);
     await session?.abort().catch(() => undefined);
     this.recorder.finish(turnId, 'cancelled');
-    this.emit({ type: 'turn', turnId, state: 'cancelled' });
+    this.emit({ type: 'turn', sessionId, turnId, state: 'cancelled' });
     this.activeTurns.delete(sessionId);
     this.turnUnsubs.get(turnId)?.();
     this.turnUnsubs.delete(turnId);

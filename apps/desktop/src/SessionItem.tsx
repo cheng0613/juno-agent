@@ -16,6 +16,7 @@ import type { SessionSummary } from './shared/ipc';
 export function SessionItem({
   session,
   active,
+  busy,
   onSelect,
   onRename,
   onPin,
@@ -24,6 +25,8 @@ export function SessionItem({
 }: {
   session: SessionSummary;
   active: boolean;
+  /** 这个会话正在跑（可能是后台会话） */
+  busy?: boolean;
   onSelect: () => void;
   onRename: (title: string) => void;
   onPin: (pinned: boolean) => void;
@@ -115,6 +118,13 @@ export function SessionItem({
           >
             <span className="flex items-center gap-1">
               {session.pinned && <span className="shrink-0 text-11 text-text-tertiary">📌</span>}
+              {busy && (
+                <span
+                  data-testid="session-busy"
+                  className="session-busy shrink-0"
+                  title="这个会话正在跑"
+                />
+              )}
               <span className="truncate">{session.title}</span>
             </span>
           </button>

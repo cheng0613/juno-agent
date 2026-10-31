@@ -3031,6 +3031,18 @@ export async function runParallelTest(win: BrowserWindow, runtime: HostRuntime):
     const aStillRunning = !turnStates.has(aTurn);
     note(`切换后 A 的轮仍在跑: ${aStillRunning}`);
 
+    /* ---- 侧栏应该标出「A 还在跑」 ---- */
+    // 切到 B 之后 A 在后台跑，侧栏必须有可见标记 ——
+    // 没有的话用户不知道后台在发生什么，并行等于不可见。
+    await delay(600);
+    const busyDots = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="session-busy"]').length`,
+    );
+    note(`侧栏运行标记数: ${busyDots}`);
+    await shootTo(win, '49-parallel-busy');
+    note('截图 49-parallel-busy');
+    if (busyDots < 1) throw new Error('后台会话在跑，但侧栏没有标记');
+
     // 等两轮都收口
     await waitFor(
       () => turnStates.size >= 2,

@@ -1229,3 +1229,16 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   border-color: var(--warning);
   border-top-color: transparent;
 }
+
+/* 侧栏会话的运行标记：会呼吸的小点，一眼看出哪个还在跑 */
+.session-busy {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--warning);
+  animation: session-busy-pulse 1.4s ease-in-out infinite;
+}
+@keyframes session-busy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

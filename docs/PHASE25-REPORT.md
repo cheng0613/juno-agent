@@ -142,6 +142,7 @@ A 的消息数: 4                    ← 真的跑完并落库了
 | `apps/desktop/electron/hostRuntime.ts` | `sessions` Map、`getSession`、`activeTurns`、`cancel(sessionId)`、`resume` 幂等 |
 | `apps/desktop/electron/main.ts` | `cancel` IPC 传 sessionId |
 | `apps/desktop/src/App.tsx` | `host.cancel(activeId)`（接口不变，语义更明确） |
+| `apps/desktop/src/SessionItem.tsx` | `busy` 标记 |
 | `apps/desktop/electron/autotest.ts` | `runParallelTest` |
 
 ## 已知限制

@@ -71,7 +71,7 @@ export function createMockHost(): HostBridge {
     async send({ text }) {
       messages.push({ id: `u-${Date.now()}`, role: 'user', text });
       const turnId = `turn-${Date.now()}`;
-      emit({ type: 'turn', turnId, state: 'running' });
+      emit({ type: 'turn', sessionId: 'mock-session', turnId, state: 'running' });
 
       await sleep(400);
       emit({ type: 'tool_use', turnId, toolUseId: 't2', toolName: 'bash', input: { command: 'cat hello.txt' } });
@@ -97,7 +97,7 @@ export function createMockHost(): HostBridge {
         await sleep(180);
         emit({ type: 'text', turnId, text: chunk, isFinal: false });
       }
-      emit({ type: 'turn', turnId, state: 'done' });
+      emit({ type: 'turn', sessionId: 'mock-session', turnId, state: 'done' });
     },
     async cancel() {},
     async resumeTurn() {},

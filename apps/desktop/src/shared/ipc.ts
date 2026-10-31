@@ -306,7 +306,13 @@ export type HostEvent =
   | { type: 'thinking'; turnId: string; text: string; isFinal: boolean }
   | { type: 'tool_use'; turnId: string; toolUseId: string; toolName: string; input: unknown }
   | { type: 'tool_result'; turnId: string; toolUseId: string; output: string; isError: boolean }
-  | { type: 'turn'; turnId: string; state: 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'; message?: string }
+  | {
+      type: 'turn';
+      sessionId: string;
+      turnId: string;
+      state: 'running' | 'done' | 'error' | 'cancelled' | 'interrupted';
+      message?: string;
+    }
   | { type: 'approval'; request: ApprovalRequest }
   | { type: 'approval_settled'; requestId: string }
   | { type: 'session_title'; sessionId: string; title: string }
