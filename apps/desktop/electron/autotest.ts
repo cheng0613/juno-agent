@@ -2805,6 +2805,73 @@ export async function runSessionOrgTest(win: BrowserWindow, runtime: HostRuntime
     note(`归档列表: ${archived.map((s) => s.title).join(', ')}`);
     if (!archived.some((s) => s.id === b)) throw new Error('归档列表里找不到');
 
+    // 先恢复，后面要验 UI 归档/恢复的闭环
+    runtime.unarchiveSession(b);
+    await delay(300);
+    await win.webContents.executeJavaScript(
+      `window.host.listSessions().then(() => 'ok')`,
+    );
+    // 让 React 重拉列表：切一次会话
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('.btn-new'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(900);
+
+    /* ---- 3.5 归档面板：从界面上归档 → 看到 → 恢复 ---- */
+    // 走 UI 归档（点菜单里的「归档」），这样 React 的计数才会跟着更新。
+    // 直接调 runtime.archiveSession 界面不知道，也就验不到底栏入口。
+    const archivedViaUi = await win.webContents.executeJavaScript(`
+      (async () => {
+        const items = [...document.querySelectorAll('[data-testid="session-item"]')];
+        if (items.length < 2) return 'too-few:' + items.length;
+        const target = items[0];
+        const menuBtn = target.querySelector('[data-testid="session-menu-btn"]');
+        if (!menuBtn) return 'no-menu-btn';
+        menuBtn.click();
+        await new Promise((r) => setTimeout(r, 300));
+        const archiveBtn = document.querySelector('[data-testid="session-menu-archive"]');
+        if (!archiveBtn) return 'no-archive-btn';
+        archiveBtn.click();
+        return 'ok';
+      })()
+    `);
+    note(`UI 归档: ${archivedViaUi}`);
+    await delay(1200);
+
+    const entryShown = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="archived-entry"]').length`,
+    );
+    note(`归档入口出现: ${entryShown}`);
+    if (entryShown < 1) throw new Error('有待归档会话时底栏没出现入口');
+
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('[data-testid="archived-entry"]'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(800);
+
+    const archivedItems = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="archived-item"]').length`,
+    );
+    note(`归档面板条目数: ${archivedItems}`);
+    await shootTo(win, '47-archived-panel');
+    note('截图 47-archived-panel');
+    if (archivedItems < 1) throw new Error('归档面板里没有条目');
+
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('[data-testid="archived-restore"]'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(1500);
+    const restoredViaUi = (await runtime.listSessions()).some((x) => x.id === b);
+    note(`UI 恢复后回到列表: ${restoredViaUi}`);
+    if (!restoredViaUi) throw new Error('点恢复后会话没回到列表');
+
+    // 关掉面板，避免挡住后面的操作
+    await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('[data-testid="archived-panel"] button[title="收起"]'); if (b) b.click(); return 'ok'; })()`,
+    );
+    await delay(300);
+
+
     /* ---- 4. 恢复 ---- */
     runtime.unarchiveSession(b);
     await delay(300);

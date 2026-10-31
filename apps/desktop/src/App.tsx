@@ -4,6 +4,7 @@ import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
+import { ArchivedPanel } from './ArchivedPanel';
 import { SessionItem } from './SessionItem';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusLine } from './StatusLine';
@@ -120,6 +121,10 @@ export function App() {
   /** 当前轮的状态行；null = 没在跑 */
   const [turnStatus, setTurnStatus] = useState<TurnStatus | null>(null);
   /** 设置面板：没 key 时全屏拦截，否则是侧边抽屉 */
+  /** 已归档面板是否打开 */
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  /** 归档数量：有才在底栏显示入口 */
+  const [archivedCount, setArchivedCount] = useState(0);
   const [settingsMode, setSettingsMode] = useState<'onboarding' | 'drawer' | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   /**
@@ -633,6 +638,19 @@ export function App() {
 
   /* ---------------- 会话管理 ---------------- */
 
+  /** 归档数只用来决定「要不要显示入口」，拿不到就当 0，不报错 */
+  const refreshArchivedCount = useCallback(() => {
+    void host
+      .listArchived()
+      .then((rows) => setArchivedCount(rows.length))
+      .catch(() => setArchivedCount(0));
+  }, [host]);
+
+  useEffect(() => {
+    refreshArchivedCount();
+  }, [refreshArchivedCount, sessions.length]);
+
+
   /** 重命名：只改本地列表，不重拉 —— 改名不影响会话内容 */
   const renameSession = useCallback(
     async (sessionId: string, title: string) => {
@@ -669,6 +687,8 @@ export function App() {
         await host.archiveSession(sessionId);
         const remaining = await host.listSessions();
         setSessions(remaining);
+        // 归档后必须刷新计数，否则底栏的「已归档 N」入口不会出现
+        refreshArchivedCount();
         if (sessionId === activeId) {
           const next = remaining[0];
           if (next) await switchSession(next.id);
@@ -678,7 +698,7 @@ export function App() {
         setNotice(`归档失败：${error instanceof Error ? error.message : String(error)}`);
       }
     },
-    [host, activeId, switchSession],
+    [host, activeId, switchSession, refreshArchivedCount],
   );
 
   /** 彻底删除：不可恢复，UI 已做过二次确认 */
@@ -789,6 +809,16 @@ export function App() {
           <button className="ghost" onClick={toggleTheme}>
             {dark ? '浅色' : '深色'}
           </button>
+          {archivedCount > 0 && (
+            <button
+              data-testid="archived-entry"
+              className="ghost"
+              title="查看并恢复已归档的会话"
+              onClick={() => setArchivedOpen(true)}
+            >
+              已归档 {archivedCount}
+            </button>
+          )}
           <button
             className="ghost"
             title="设置（模型、密钥、审批策略）"
@@ -1065,6 +1095,26 @@ export function App() {
 
         {turnDiff && diffOpen && (
           <DiffPanel payload={turnDiff} onClose={() => setDiffOpen(false)} />
+        )}
+        {archivedOpen && (
+          <ArchivedPanel
+            host={host}
+            onClose={() => setArchivedOpen(false)}
+            onRestored={() => {
+              void host.listSessions().then(setSessions);
+              refreshArchivedCount();
+            }}
+          />
+        )}
+        {archivedOpen && (
+          <ArchivedPanel
+            host={host}
+            onClose={() => setArchivedOpen(false)}
+            onRestored={() => {
+              void host.listSessions().then(setSessions);
+              refreshArchivedCount();
+            }}
+          />
         )}
         {dirsOpen && (
           <ExtraDirsPanel
