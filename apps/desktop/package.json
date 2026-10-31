@@ -17,7 +17,9 @@
     "@anthropic-ai/sdk": "^0.93.0",
     "@cindy/maker-core": "workspace:*",
     "@juno/host-core": "workspace:*",
-    "better-sqlite3": "^13.0.3"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "better-sqlite3": "^13.0.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

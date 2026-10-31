@@ -10,6 +10,7 @@ import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import {
+  LOCAL_AGENT_CLIENT,
   Maker,
   createConsoleLogger,
   isTerminalTurnEvent,
@@ -60,6 +61,7 @@ import { parseModelCatalog } from './modelCatalog.js';
 import { createSavepoint, restoreSavepoint } from './gitSavepoint.js';
 import { saveImageAttachment, type SavedImage } from './imageAttachment.js';
 import { prepareWorkerWorktree, removeWorkerWorktree } from './workerWorktree.js';
+import { startOrcaToolServer, type OrcaToolServer } from './orcaToolServer.js';
 
 export interface HostConfig {
   upstreamRoot: string;
@@ -318,6 +320,23 @@ export class HostRuntime {
   private permissions!: PermissionStore;
   /** ORCA 协作：team / worker 的持久化 */
   private orca!: OrcaStore;
+  /** ORCA 的 MCP 工具服务器（Lead 靠它派活） */
+  private orcaTools: OrcaToolServer | null = null;
+  /**
+   * token → 调用者身份。
+   *
+   * 为什么不靠「当前 Lead / 当前 worker」这样的单值字段：
+   * MCP server 是全局一个，而每个 pi 进程是独立的 HTTP 客户端。
+   * 它们的请求里没有我们的会话 id，宿主这边没办法区分
+   * 「这条请求是哪个 worker 发的」。用单值字段的话，两个 worker
+   * 同时回报会冒名顶替。
+   *
+   * 所以给**每个会话一套独立 token**，由 token 反查身份。
+   */
+  private orcaTokens = new Map<
+    string,
+    { role: 'lead' | 'worker'; sessionId: string; workerId?: string }
+  >();
   private recorder!: SessionRecorder;
   private maker!: Maker;
   /**
@@ -467,6 +486,43 @@ export class HostRuntime {
       api: this.cfg.api,
       dataDir: this.cfg.dataDir,
     });
+
+    // ORCA 工具服务器。起不来不影响基本对话，只影响「Lead 派活」能力，
+    // 所以吞掉异常 —— 宁可没有协同，也不要开不了 app。
+    await this.startOrcaTools();
+  }
+
+  /**
+   * 起 ORCA 的 MCP 工具服务器。
+   *
+   * 只给 **Lead 会话** 注入工具，worker 不注入 ——
+   * worker 是干活的，不是派活的。层级别乱（否则 worker 再建 worker，
+   * 用户会看到一棵树而不是一个队）。
+   */
+  async startOrcaTools(): Promise<void> {
+    if (this.orcaTools) return;
+    try {
+      this.orcaTools = await startOrcaToolServer({
+        createWorker: (leadId, config) => this.createWorker(leadId, config),
+        sendToWorker: (workerId, text) => this.sendToWorker(workerId, text),
+        listWorkers: (leadId) => this.orca.listWorkersByLead(leadId),
+        reportToLead: (workerId, message) => this.reportToLead(workerId, message),
+        resolveToken: (token) => {
+          const id = this.orcaTokens.get(token);
+          console.log('[orca/tools] resolve keys=', [...this.orcaTokens.keys()].map(k => k.slice(0, 22)));
+          if (!id) return null;
+          if (id.role === 'lead') return { role: 'lead', sessionId: id.sessionId };
+          // workerId 还没回填时也给一个身份：拉工具列表不需要它，
+          // 真正调 send_to_lead 时早就补上了
+          return { role: 'worker', sessionId: id.sessionId, workerId: id.workerId ?? '' };
+        },
+      });
+      logger.info('orca tools ready', { url: this.orcaTools.url });
+    } catch (error) {
+      logger.warn('orca 工具服务器启动失败，协同能力不可用', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -583,15 +639,67 @@ export class HostRuntime {
     /** ORCA worker 用：工作目录与模型可以跟 lead 不一样 */
     model?: string,
     workingDir?: string,
+    /**
+     * 注入哪一套 ORCA 工具：
+     *   'lead'   —— create_worker / send_to_worker / list_workers（派活）
+     *   'worker' —— send_to_lead（回报）
+     *   false    —— 不注入
+     *
+     * worker 不能派活。给了它 create_worker 就会变成 worker 再建 worker
+     * 的一棵树，用户根本看不清谁在干什么。
+     */
+    withOrcaTools: 'lead' | 'worker' | false = false,
+    /** worker 模式下要绑定的 worker id（回报时用来标识来源） */
+    workerIdForTools?: string,
   ): Promise<string> {
+    /*
+     * **自己先生成 sessionId**，而不是等 maker 返回。
+     *
+     * pi 在建会话过程中就会去连 MCP server 拉工具列表
+     * （日志顺序：createSession ↓ → REQ POST /mcp → createSession ↑）。
+     * token 必须在那一刻就能反查到正确的 sessionId ——
+     * 先放空串再补是不行的：工具会能列出来但调不动，
+     * 而且只在 stderr 留一行 `connect orca failed: HTTP 401`。
+     *
+     * 预先指定 id 是 maker 支持的能力（resume 就是这么用的）。
+     */
+    const newSessionId = randomUUID();
+    const pendingToken =
+      withOrcaTools && this.orcaTools ? `orca-${randomUUID()}` : null;
+    if (pendingToken && withOrcaTools) {
+      this.orcaTokens.set(pendingToken, {
+        role: withOrcaTools,
+        sessionId: newSessionId,
+        ...(workerIdForTools ? { workerId: workerIdForTools } : {}),
+      });
+    }
+
     const session = await this.maker.createSession({
+      id: newSessionId,
       agentKind: 'pi',
       workingDir: workingDir ?? this.cfg.workDir,
       model: model ?? this.cfg.model,
       title,
       // 传 undefined 时引擎用自己的 45 分钟默认值；我们显式给 15 分钟
       ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
+      ...(pendingToken
+        ? {
+            [LOCAL_AGENT_CLIENT]: {
+              url: this.orcaTools!.url,
+              token: pendingToken,
+              hostToolsOnly: true,
+              mcpName: 'orca',
+            },
+          }
+        : {}),
     });
+    if (pendingToken && withOrcaTools) {
+      this.orcaTokens.set(pendingToken, {
+        role: withOrcaTools,
+        sessionId: session.id,
+        ...(workerIdForTools ? { workerId: workerIdForTools } : {}),
+      });
+    }
     this.attach(session);
     return session.id;
   }
@@ -604,7 +712,8 @@ export class HostRuntime {
     if (existing.length > 0) {
       return await this.resume(existing[0]!.id);
     }
-    return await this.createSession();
+    // 用户新建的会话就是 Lead：给它派活工具
+    return await this.createSession('新会话', undefined, undefined, 'lead');
   }
 
   /**
@@ -627,10 +736,30 @@ export class HostRuntime {
     // 已经活着的会话直接复用。
     // 这里无条件重建的话，切走再切回会把正在跑的那一轮连同它的订阅一起换掉 ——
     // 后台任务静默消失，而且不会有任何报错。
+    console.log('[orca/tools] resume 进入', sessionId.slice(0,8), 'tools=', !!this.orcaTools);
     if (this.sessions.has(sessionId)) return sessionId;
 
     const meta = await this.storage.get(sessionId);
     if (!meta) throw new Error(`session not found: ${sessionId}`);
+    // 重新打开时也要把工具重新注入 —— 否则重启/切走再切回后，
+    // Lead 就突然不会派活了，而界面上看不出任何变化。
+    const workerRow = this.orca.getWorkerBySession(sessionId);
+    const withOrcaTools: 'lead' | 'worker' | false = this.orcaTools
+      ? workerRow
+        ? 'worker'
+        : 'lead'
+      : false;
+    // resume 也要发新 token —— 旧 token 对已经不存在的进程没用了
+    const resumeToken =
+      withOrcaTools && this.orcaTools ? `orca-${randomUUID()}` : null;
+    // 同样要**先登记再建会话**：pi 一启动就连 MCP server
+    if (resumeToken && withOrcaTools) {
+      this.orcaTokens.set(resumeToken, {
+        role: withOrcaTools,
+        sessionId,
+        ...(workerRow ? { workerId: workerRow.id } : {}),
+      });
+    }
     const session = await this.maker.createSession({
       id: sessionId,
       agentKind: 'pi',
@@ -638,7 +767,24 @@ export class HostRuntime {
       model: meta.model,
       title: meta.title,
       ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
+      ...(resumeToken
+        ? {
+            [LOCAL_AGENT_CLIENT]: {
+              url: this.orcaTools!.url,
+              token: resumeToken,
+              hostToolsOnly: true,
+              mcpName: 'orca',
+            },
+          }
+        : {}),
     });
+    if (resumeToken && withOrcaTools) {
+      this.orcaTokens.set(resumeToken, {
+        role: withOrcaTools,
+        sessionId,
+        ...(workerRow ? { workerId: workerRow.id } : {}),
+      });
+    }
     this.attach(session);
     // 重建会话后必须把额外目录重新交给引擎 —— 它们只存在于运行时，
     // 不重放的话重启一次就白设了。
@@ -1523,6 +1669,60 @@ export class HostRuntime {
   }
 
   /** 模式变化统一从这里广播，避免三个调用点各拼一遍字段 */
+  /* ---------------- ORCA 回报 ---------------- */
+
+  /**
+   * worker 向 Lead 回报。
+   *
+   * 回报**注入 Lead 的对话**，而不是弹通知：
+   * 用户在 Lead 那边问「做完了吗」，得能接着聊下去。
+   *
+   * 前缀 `[From Orca Worker <label>]` 让模型知道这不是用户说的话 ——
+   * 不给前缀的话，模型会以为自己刚才说了这些，或者当成用户新指令。
+   */
+  async reportToLead(workerId: string, message: string): Promise<void> {
+    const worker = this.orca.getWorker(workerId);
+    if (!worker) throw new Error(`worker 不存在: ${workerId}`);
+
+    const leadRow = this.db
+      .prepare('SELECT lead_session_id AS id FROM orca_teams WHERE id = ?')
+      .get(worker.teamId) as { id: string } | undefined;
+    if (!leadRow) throw new Error('找不到 worker 所属的 Lead');
+
+    const label = worker.label ?? worker.role;
+    const text = `[From Orca Worker ${label}] ${message}`;
+
+    // 存进 Lead 的消息表：用户切走再切回也能看到
+    const leadTurn = this.db
+      .prepare(
+        `SELECT id FROM turns WHERE session_id = ? ORDER BY rowid DESC LIMIT 1`,
+      )
+      .get(leadRow.id) as { id: string } | undefined;
+    this.messages.append({
+      id: randomUUID(),
+      clientId: randomUUID(),
+      sessionId: leadRow.id,
+      turnId: leadTurn?.id ?? null,
+      role: 'user',
+      content: text,
+    });
+
+    // 推给界面：Lead 对话里立刻能看到
+    this.emit({
+      type: 'text',
+      sessionId: leadRow.id,
+      turnId: leadTurn?.id ?? '',
+      text,
+      isFinal: true,
+    });
+
+    // worker 干完了：状态变 done，面板胶囊跟着变
+    this.orca.updateWorkerStatus(workerId, 'done');
+    this.emitWorkers(leadRow.id);
+
+    logger.info('orca worker 回报', { workerId, label, chars: message.length });
+  }
+
   /* ---------------- ORCA 状态投影 ---------------- */
 
   /**
@@ -1742,6 +1942,10 @@ export class HostRuntime {
       orcaWorkerSessionTitle(role, label),
       config.model ?? leadMeta.model,
       workingDir,
+      // 给 worker 注入「回报」工具。此时 worker id 还没生成，
+      // 但工具的 getter 读的是字段，建完记录后回填即可 ——
+      // 模型真正调工具时记录已经存在。
+      'worker',
     );
 
     /* ---- 默认全放行 ----
@@ -1760,7 +1964,7 @@ export class HostRuntime {
       console.warn('[orca] 设置 worker 权限档位失败:', String(error));
     }
 
-    return this.orca.addWorker({
+    const record = this.orca.addWorker({
       teamId: team.id,
       sessionId,
       role,
@@ -1769,6 +1973,21 @@ export class HostRuntime {
       isolated: isolationInfo.isolated,
       isolationReason: isolationInfo.reason ?? null,
     });
+
+    /*
+     * 补登记 workerId。
+     *
+     * 建会话时记录还不存在（记录要引用 sessionId，鸡生蛋问题），
+     * 所以先登记成 {role:'worker', sessionId}，现在补上 workerId。
+     * 模型真正调 send_to_lead 是之后的事，那时这里已经补完了。
+     */
+    for (const [token, identity] of this.orcaTokens) {
+      if (identity.sessionId === sessionId && !identity.workerId) {
+        this.orcaTokens.set(token, { ...identity, workerId: record.id });
+      }
+    }
+
+    return record;
   }
 
   listWorkers(leadSessionId: string): OrcaWorkerRecord[] {
@@ -1790,6 +2009,28 @@ export class HostRuntime {
       .get(worker.teamId) as { id: string } | undefined;
     this.orca.removeWorker(workerId);
     if (leadId) this.emitWorkers(leadId.id);
+  }
+
+  /**
+   * 给 worker 派活（工具调用的入口）。
+   *
+   * 找不到 worker 时把可用列表一并报回去 —— 模型看不到 UI，
+   * 只说「不存在」它会重试同一个 id。
+   */
+  async sendToWorker(workerId: string, text: string): Promise<void> {
+    const worker = this.orca.getWorker(workerId);
+    if (!worker) {
+      // 把同一个 team 的 worker 列出来：模型看不到 UI，
+      // 只说「不存在」它会重试同一个错 id
+      const team = this.orca.getTeamByWorkerSession(workerId);
+      const available = team
+        ? this.orca.listWorkersByTeam(team.id).map((w) => `${w.id}(${w.label})`)
+        : [];
+      throw new Error(
+        `worker 不存在: ${workerId}。当前可用: ${available.length ? available.join(', ') : '（无，先用 create_worker 建一个）'}`,
+      );
+    }
+    await this.send(worker.sessionId, text);
   }
 
   /**
@@ -1863,6 +2104,11 @@ export class HostRuntime {
       .prepare('SELECT working_dir FROM orca_workers WHERE id = ?')
       .get(workerId) as { working_dir: string | null } | undefined;
     return row?.working_dir ?? null;
+  }
+
+  /** 验收用：ORCA 工具服务器的 URL；null 表示没起来 */
+  debugOrcaToolUrl(): string | null {
+    return this.orcaTools?.url ?? null;
   }
 
   /** 验收用：读会话的 workingDir / model，测试要据此准备 git 仓库 */

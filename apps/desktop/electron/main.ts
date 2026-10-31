@@ -569,7 +569,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest, runOrcaToolsTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -628,6 +628,8 @@ app.whenReady().then(async () => {
                                         ? runOrcaIsolationTest(win, runtime)
                                       : mode === 'orca-ui'
                                         ? runOrcaUiTest(win, runtime)
+                                      : mode === 'orca-tools'
+                                        ? runOrcaToolsTest(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

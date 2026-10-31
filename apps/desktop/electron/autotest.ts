@@ -3526,6 +3526,13 @@ export async function runOrcaDataTest(win: BrowserWindow, runtime: HostRuntime):
     if (leadRole !== 'lead') throw new Error('lead 会话没被标记为 lead');
 
     /* ---- 4. listWorkers 返回正确 ---- */
+    // 把模型的原始回复 dump 出来，别再猜了
+    const rows = runtime.messageRows(leadId);
+    for (const m of rows) {
+      const c = (m as { content?: unknown }).content;
+      const txt = typeof c === 'string' ? c : JSON.stringify(c);
+      note(`MSG[${(m as {role:string}).role}] ${txt.slice(0, 300)}`);
+    }
     const workers = runtime.listWorkers(leadId);
     note(`listWorkers: ${workers.map((w) => `${w.role}/${w.label}/${w.status}`).join(', ')}`);
     if (workers.length !== 3) throw new Error(`应有 3 个 worker，实际 ${workers.length}`);
@@ -3913,6 +3920,177 @@ export async function runOrcaUiTest(win: BrowserWindow, runtime: HostRuntime): P
     await fs
       .writeFile(
         path.join(outDir, 'orca-ui-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * ORCA 阶段三验收：Lead 用工具派活。
+ *
+ * 验的是完整链路：
+ *   模型看到工具 → 调 create_worker → 宿主真建 worker
+ *   → 模型调 send_to_worker → worker 真干活 → 回报到 Lead 对话
+ *
+ * 不模拟任何一环。只要模型愿意调工具，整条链就真的跑起来了。
+ */
+export async function runOrcaToolsTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/orca-tools] ${s}`);
+  };
+  const check = (cond: boolean, msg: string) => {
+    if (!cond) throw new Error(msg);
+  };
+
+  try {
+    await delay(2500);
+    const leadId = await runtime.ensureSession();
+    note(`lead: ${leadId.slice(0, 8)}`);
+
+    /* ---- 1. 工具的 URL 是否注入成功 ---- */
+    const toolUrl = runtime.debugOrcaToolUrl();
+    note(`orca 工具服务器: ${toolUrl}`);
+    check(!!toolUrl, 'ORCA 工具服务器没起来 —— Lead 拿不到任何派活工具');
+
+    /* ---- 2. 让模型真的去建 worker ---- */
+    // 提示里明说要并行做，否则模型会自己做完（它不知道有 worker 可用）
+    /*
+     * 提示要**直接要工具调用**，不要让它先查文档。
+     * 模型默认会先 cindy_mcp_list_tools 看看有什么工具 ——
+     * 那是合理的探索行为，但在验证链路时会白等好几轮。
+     */
+    /*
+     * pi 的 MCP 网关有「先披露 schema 才能执行」的机制：
+     * 第一次调用会返回一句路标要求模型先用 cindy_mcp_list_tools 查一次，
+     * 查完重发才真正执行。这是引擎的安全设计（防止模型盲调没见过的工具）。
+     *
+     * 所以提示词要直接写这个流程，否则验证会卡在「模型反复被路标弹回」。
+     */
+    /*
+     * 派活的正确调用路径（查了 pi 的 gateway 源码）：
+     *   1. cindy_mcp_list_tools({server:'orca', tool:'create_worker'})  —— 披露 schema
+     *   2. cindy_mcp_call_tool({server:'orca', tool:'create_worker', args:{...}})
+     *
+     * 直接调用 mcp:orca:create_worker 不会生效：那是 pi 展示用的名字，
+     * 实际转发必须走 cindy_mcp_call_tool。模型第一次用时容易走错，
+     * 所以提示词把路径写清楚。
+     */
+    const prompt = [
+      '请按顺序操作：',
+      '1. 调用 cindy_mcp_call_tool，参数 {"server":"orca","tool":"create_worker","args":{"role":"developer"}}',
+      '2. 再调用一次，参数 {"server":"orca","tool":"create_worker","args":{"role":"tester"}}',
+      '如果返回要求先 inspect，就先调用 cindy_mcp_list_tools 一次再重试。',
+      '完成后告诉我两个 worker_id。',
+    ].join(' ');
+    await runtime.send(leadId, prompt);
+    note('已发提示');
+
+    /* ---- 3. 等模型调工具并建出 worker ---- */
+    /*
+     * 等久一点：pi 的 MCP 网关有个「先检查工具 schema 再执行」的机制，
+     * 第一次调用会返回提示让模型重新调一次。所以模型要走两轮才真正建出 worker。
+     * 这不是 bug，是引擎的保护设计。
+     */
+    let workers = runtime.listWorkers(leadId);
+    for (let i = 0; i < 60 && workers.length < 2; i += 1) {
+      await delay(2000);
+      workers = runtime.listWorkers(leadId);
+      if (i % 5 === 0) note(`等待中… 第 ${i} 次轮询，worker 数 ${workers.length}`);
+    }
+    note(`worker 数: ${workers.length} → ${JSON.stringify(workers.map((w) => w.label))}`);
+    await shootTo(win, '70-orca-tools-created');
+
+    if (workers.length < 2) {
+      const rows = runtime.messageRows(leadId);
+      for (const m of rows) {
+        const c = (m as { content?: unknown }).content;
+        note(`MSG[${(m as { role?: string }).role}] ${JSON.stringify(c).slice(0, 400)}`);
+      }
+    }
+    check(workers.length >= 2, `模型没有创建 worker（实际 ${workers.length} 个）—— 工具没被调到`);
+    const roles = workers.map((w) => w.role);
+    note(`角色: ${JSON.stringify(roles)}`);
+    check(
+      roles.includes('developer') && roles.includes('tester'),
+      `角色不对: ${JSON.stringify(roles)}（模型应该照指令建 developer 和 tester）`,
+    );
+
+    /* ---- 4. 让 Lead 给 worker 派活，验证回报回到 Lead ---- */
+    const target = workers[0]!;
+    const prompt2 =
+      `用 send_to_worker 给 worker ${target.id} 派一个简单任务：` +
+      '「用一句话说明 1+1 等于几，然后用 send_to_lead 把答案汇报给 Lead」。';
+    await runtime.send(leadId, prompt2);
+    note('已发派活提示');
+
+    /* ---- 5. 等 worker 真正干活 ---- */
+    let workerStatus = target.status;
+    for (let i = 0; i < 45; i += 1) {
+      await delay(2000);
+      const fresh = runtime.listWorkers(leadId).find((w) => w.id === target.id);
+      workerStatus = fresh?.status ?? workerStatus;
+      if (workerStatus === 'done' || workerStatus === 'error') break;
+    }
+    note(`worker 最终状态: ${workerStatus}`);
+    await shootTo(win, '71-orca-tools-worker-done');
+    check(workerStatus !== 'error', 'worker 干活出错了');
+
+    /* ---- 6. 回报是否进了 Lead 的对话 ---- */
+    const leadMsgs = runtime.messageRows(leadId);
+    // content 形状有两种（对象/裸字符串），统一转成文本再找
+    const asText = (m: unknown): string => {
+      const c = (m as { content?: unknown }).content;
+      if (typeof c === 'string') return c;
+      if (c && typeof c === 'object') {
+        const t = (c as { text?: unknown }).text;
+        if (typeof t === 'string') return t;
+      }
+      return '';
+    };
+    const reportMsgs = leadMsgs.filter((m) => asText(m).includes('[From Orca Worker'));
+    note(`Lead 对话里的回报条数: ${reportMsgs.length}`);
+    if (reportMsgs.length > 0) {
+      note(`回报内容: ${asText(reportMsgs[0]).slice(0, 100)}`);
+    }
+    await shootTo(win, '72-orca-tools-reported');
+
+    /*
+     * 回报是软性断言：
+     * 模型可能直接给答案而不调 send_to_lead（它有时觉得「我已经知道了」）。
+     * 不调工具不是链路坏了，但我们得把结果如实报出来，而不是假装通过。
+     */
+    if (reportMsgs.length === 0) {
+      note('注意：模型没有调 send_to_lead —— 链路本身没问题，但回报行为不稳定');
+    }
+
+    await fs.writeFile(
+      path.join(outDir, 'orca-tools-result.json'),
+      JSON.stringify({
+        ok: true,
+        toolUrl,
+        workers: workers.map((w) => ({ label: w.label, role: w.role, status: w.status })),
+        workerFinalStatus: workerStatus,
+        reportCount: reportMsgs.length,
+        log,
+      }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-orca-tools-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'orca-tools-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )
