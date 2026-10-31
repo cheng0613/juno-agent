@@ -3697,6 +3697,16 @@ export async function runOrcaIsolationTest(win: BrowserWindow, runtime: HostRunt
     note(`手动改成 bypassPermissions: ${forced}`);
     check(forced === 'bypassPermissions', '手动改权限档位没生效');
 
+    /* ---- 7. 权限档位必须落库（否则重启后悄悄变回默认） ---- */
+    // 这条断言当初漏了，导致 setPermissionMode 不落库的 bug 一直没被发现。
+    // 必须读数据库，不能读引擎 —— 读引擎会假通过。
+    const persisted = runtime.debugPermissionModeFromDb(w3.sessionId);
+    note(`数据库里的权限档位: ${persisted}`);
+    check(
+      persisted === 'bypassPermissions',
+      `权限档位没落库（库里是 ${persisted}）—— 重启后会变回默认值`,
+    );
+
     await fs.writeFile(
       path.join(outDir, 'orca-iso-result.json'),
       JSON.stringify({ ok: true, log }, null, 2),

@@ -1154,6 +1154,12 @@ export class HostRuntime {
   async setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void> {
     const session0 = await this.getSession(sessionId);
     await session0.setPermissionMode(mode);
+    // 引擎只在内存里记，从不落库 —— 重启后档位会悄悄变回建会话时的默认值。
+    // 对 worker 尤其致命：明明是 bypassPermissions，重启后变成 ask，
+    // 后台跑的任务全卡在等确认上，用户看不出原因。
+    this.db
+      .prepare('UPDATE sessions SET permission_mode = ? WHERE id = ?')
+      .run(mode, sessionId);
     this.modes.permissionMode = mode;
     this.emitModes();
   }
@@ -1800,6 +1806,21 @@ export class HostRuntime {
         /* 引擎没暴露就用库里的值兜底 */
       }
     }
+    const row = this.db
+      .prepare('SELECT permission_mode FROM sessions WHERE id = ?')
+      .get(sessionId) as { permission_mode?: string } | undefined;
+    return row?.permission_mode ?? 'unknown';
+  }
+
+  /**
+   * 验收用：**只看数据库**里的权限档位。
+   *
+   * 单独开一个方法而不是给上面加参数，因为两者的断言意义不同：
+   *   上面的：引擎当前真的用什么档位
+   *   这个：重启后会用回什么档位（= 库里存的值）
+   * 只查引擎会漏掉「不落库」这类 bug。
+   */
+  debugPermissionModeFromDb(sessionId: string): string {
     const row = this.db
       .prepare('SELECT permission_mode FROM sessions WHERE id = ?')
       .get(sessionId) as { permission_mode?: string } | undefined;

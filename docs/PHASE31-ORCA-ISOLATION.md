@@ -111,6 +111,15 @@ if (rel) {
 
 已修：宿主在 `setPermissionMode` 里写回 `sessions.permission_mode`。
 
+> **修复过程本身也出了个问题，值得记下来。**
+>
+> 第一次修复我用脚本做文本替换，模式没匹配上，**脚本静默什么都没改**，
+> 但我以为改上了，还在报告里写了「已修」。
+> 用户追问「两个 bug 是否修复」时，我 grep 才发现这段代码原封不动。
+>
+> 教训：**用脚本改代码必须验证结果**（grep 确认、或看 git diff），
+> 不能看脚本没报错就当时成。这也是后来加「断言可证伪」检查的原因。
+
 > 这也是验收容易假通过的地方：如果只读数据库断言，
 > 会因为「数据库里本来就是默认值」而误判。验收里改成从**引擎**读真实值
 > （`session.permissionModeState.mode`）。
@@ -134,6 +143,7 @@ if (rel) {
 | 非 git 目录 → `isolated=false`、原因 `not-a-git-repo` | ✓ |
 | 非 git 目录权限**降回** `auto` | ✓ |
 | 手动改成 `bypassPermissions` 生效 | ✓ |
+| **数据库里存的是 `bypassPermissions`** | ✓ |
 
 ```
 w1 目录: .../.juno/worktrees/developer
@@ -145,7 +155,19 @@ w1 权限档位: bypassPermissions
 非 git 目录的权限档位: auto
 ```
 
-回归：`orca` / `permission` / `rewind` / `mode` 全过。
+回归：`orca` / `permission` / `mode` / `rewind` / `session` / `parallel` /
+`routing` / `live` / `task` 全过。
+
+### 断言可证伪：把 bug 放回去，确认断言会失败
+
+光看断言通过不够 —— 可能它压根测的是别的。两条都做了反向验证：
+
+| 临时改坏什么 | 断言输出 |
+|---|---|
+| 删掉 `setPermissionMode` 的落库语句 | `数据库里的权限档位: ask` → **失败** |
+| 删掉 `findRepoRoot` 的父仓库校验 | `非 git 目录: isolated=false, reason=...worktree add...` → **失败** |
+
+两条断言都精确抓到了各自的 bug，不是碰巧通过。
 
 ---
 
