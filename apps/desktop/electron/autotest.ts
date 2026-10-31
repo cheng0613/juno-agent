@@ -3470,3 +3470,115 @@ export async function runLiveViewTest(win: BrowserWindow, runtime: HostRuntime):
     app.quit();
   }
 }
+
+/**
+ * ORCA 阶段一验收：数据层。
+ *
+ * 不需要模型调用，纯验数据库行为与约束：
+ *   1. 建 worker 会得到一个独立会话 + 一条记录
+ *   2. label 撞名自动加序号
+ *   3. 一个 lead 只有一个 active team
+ *   4. 超过硬上限拒绝
+ *   5. worker 会话被标记 orca_role='worker'（侧栏据此过滤）
+ */
+export async function runOrcaDataTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/orca] ${s}`);
+  };
+
+  try {
+    await delay(2200);
+    const leadId = await runtime.ensureSession();
+    note(`lead: ${leadId.slice(0, 8)}`);
+
+    /* ---- 1. 建 3 个 worker ---- */
+    const w1 = await runtime.createWorker(leadId, { role: 'developer' });
+    const w2 = await runtime.createWorker(leadId, { role: 'developer' });
+    const w3 = await runtime.createWorker(leadId, { role: 'reviewer', label: '审查员' });
+    note(`建了 3 个 worker: ${w1.label} / ${w2.label} / ${w3.label}`);
+
+    if (w1.label !== 'developer') throw new Error(`第一个 label 应为 developer，实际 ${w1.label}`);
+    // 撞名应自动加序号
+    if (w2.label !== 'developer-2') throw new Error(`撞名应变成 developer-2，实际 ${w2.label}`);
+    if (w3.label !== '审查员') throw new Error(`显式 label 应保留，实际 ${w3.label}`);
+
+    /* ---- 2. worker 是独立会话 ---- */
+    const sessions = await runtime.listSessions();
+    const workerSessions = [w1, w2, w3].map((w) => w.sessionId);
+    for (const sid of workerSessions) {
+      const found = sessions.find((s) => s.id === sid);
+      if (!found) throw new Error(`worker 会话 ${sid.slice(0, 8)} 不在会话列表里`);
+    }
+    note(`会话总数: ${sessions.length}（lead 1 + worker 3 = 4）`);
+
+    /* ---- 3. orca_role 标记 ---- */
+    const roles = workerSessions.map((sid) => runtime.orcaRoleOf(sid));
+    note(`worker 的 orcaRole: ${JSON.stringify(roles)}`);
+    if (roles.some((r) => r !== 'worker')) throw new Error('worker 会话没被标记为 worker');
+    const leadRole = runtime.orcaRoleOf(leadId);
+    note(`lead 的 orcaRole: ${leadRole}`);
+    if (leadRole !== 'lead') throw new Error('lead 会话没被标记为 lead');
+
+    /* ---- 4. listWorkers 返回正确 ---- */
+    const workers = runtime.listWorkers(leadId);
+    note(`listWorkers: ${workers.map((w) => `${w.role}/${w.label}/${w.status}`).join(', ')}`);
+    if (workers.length !== 3) throw new Error(`应有 3 个 worker，实际 ${workers.length}`);
+    if (workers.some((w) => w.status !== 'idle')) throw new Error('新 worker 状态应为 idle');
+
+    /* ---- 5. 一个 lead 只有一个 active team ---- */
+    const t1 = runtime.debugOrcaTeam(leadId);
+    const t2 = runtime.debugOrcaTeam(leadId);
+    note(`team 幂等: ${t1} vs ${t2}`);
+    if (t1 !== t2) throw new Error('重复取 team 应返回同一个');
+
+    /* ---- 6. 硬上限 ---- */
+    // 已经有 3 个，再建到 8 个，第 9 个应失败
+    let added = 0;
+    for (let i = 0; i < 10; i += 1) {
+      try {
+        await runtime.createWorker(leadId, { role: 'tester' });
+        added += 1;
+      } catch (error) {
+        note(`第 ${added + 1} 个（总第 ${3 + added + 1}）被拒: ${error instanceof Error ? error.message : String(error)}`);
+        break;
+      }
+    }
+    note(`额外建了 ${added} 个，总共 ${runtime.listWorkers(leadId).length} 个`);
+    const total = runtime.listWorkers(leadId).length;
+    if (total > 8) throw new Error(`超过硬上限 8 还能建: ${total}`);
+    if (total !== 8) throw new Error(`应刚好建到 8 个上限，实际 ${total}`);
+
+    // 再建一个应被拒
+    let rejected = false;
+    try {
+      await runtime.createWorker(leadId, { role: 'tester' });
+    } catch {
+      rejected = true;
+    }
+    note(`超上限被拒: ${rejected}`);
+    if (!rejected) throw new Error('超过硬上限没有拒绝');
+
+    await fs.writeFile(
+      path.join(outDir, 'orca-data-result.json'),
+      JSON.stringify({ ok: true, labels: workers.map((w) => w.label), total, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await fs
+      .writeFile(
+        path.join(outDir, 'orca-data-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

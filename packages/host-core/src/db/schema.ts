@@ -236,4 +236,49 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE sessions ADD COLUMN archived_at INTEGER;
     `,
   },
+  {
+    version: 7,
+    name: 'orca-teams',
+    // ORCA（多 agent 协作）：一个 Lead 会话带多个 Worker 会话。
+    //
+    // 设计对齐上游 Cindy：
+    //   - Worker 不是子 agent，是**独立会话**（有自己的上下文和对话）
+    //   - 一个 Lead 同时只能有一个 active team
+    //   - sessions.orca_role 冗余存储：侧栏查列表时不能 join 三张表
+    sql: `
+      CREATE TABLE orca_teams (
+        id                TEXT PRIMARY KEY,
+        lead_session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        status            TEXT NOT NULL DEFAULT 'active',
+        created_at        INTEGER NOT NULL,
+        completed_at      INTEGER
+      );
+
+      -- 一个 Lead 同时只能有一个 active team
+      CREATE UNIQUE INDEX uniq_orca_active_team
+        ON orca_teams(lead_session_id) WHERE status = 'active';
+
+      CREATE TABLE orca_workers (
+        id           TEXT PRIMARY KEY,
+        team_id      TEXT NOT NULL REFERENCES orca_teams(id) ON DELETE CASCADE,
+        session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        role         TEXT NOT NULL DEFAULT 'developer',
+        label        TEXT,
+        status       TEXT NOT NULL DEFAULT 'idle',
+        focused      INTEGER NOT NULL DEFAULT 0,
+        idle_since   INTEGER,
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL
+      );
+
+      -- 一个会话最多属于一个 worker
+      CREATE UNIQUE INDEX uniq_orca_worker_session ON orca_workers(session_id);
+      -- 同 team 内 label 不重复（大小写不敏感）
+      CREATE UNIQUE INDEX uniq_orca_worker_label
+        ON orca_workers(team_id, lower(label));
+
+      ALTER TABLE sessions ADD COLUMN orca_role TEXT;
+      CREATE INDEX idx_sessions_orca_role ON sessions(orca_role);
+    `,
+  },
 ];

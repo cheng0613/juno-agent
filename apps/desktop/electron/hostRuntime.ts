@@ -21,6 +21,8 @@ import {
 
 import {
   MessageStore,
+  ORCA_WORKER_HARD_LIMIT,
+  OrcaStore,
   PermissionStore,
   SessionRecorder,
   SqliteSessionStorage,
@@ -28,8 +30,11 @@ import {
   assertPiBinaryExists,
   createPiAgent,
   openDatabase,
+  orcaWorkerSessionTitle,
   resolvePiBinary,
   type Db,
+  type OrcaWorkerConfig,
+  type OrcaWorkerRecord,
 } from '@juno/host-core';
 
 import type {
@@ -310,6 +315,8 @@ export class HostRuntime {
   private messages!: MessageStore;
   private turns!: TurnStore;
   private permissions!: PermissionStore;
+  /** ORCA 协作：team / worker 的持久化 */
+  private orca!: OrcaStore;
   private recorder!: SessionRecorder;
   private maker!: Maker;
   /**
@@ -417,6 +424,7 @@ export class HostRuntime {
     this.messages = new MessageStore(this.db);
     this.turns = new TurnStore(this.db);
     this.permissions = new PermissionStore(this.db);
+    this.orca = new OrcaStore(this.db);
     this.recorder = new SessionRecorder(this.db, this.messages, this.turns);
 
     // 启动期把上次被杀时停在 running 的轮收口
@@ -569,11 +577,16 @@ export class HostRuntime {
     this.turns.markResolved(turnId);
   }
 
-  async createSession(title = '新会话'): Promise<string> {
+  async createSession(
+    title = '新会话',
+    /** ORCA worker 用：工作目录与模型可以跟 lead 不一样 */
+    model?: string,
+    workingDir?: string,
+  ): Promise<string> {
     const session = await this.maker.createSession({
       agentKind: 'pi',
-      workingDir: this.cfg.workDir,
-      model: this.cfg.model,
+      workingDir: workingDir ?? this.cfg.workDir,
+      model: model ?? this.cfg.model,
       title,
       // 传 undefined 时引擎用自己的 45 分钟默认值；我们显式给 15 分钟
       ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
@@ -1608,6 +1621,65 @@ export class HostRuntime {
 
   messageRows(sessionId: string) {
     return this.messages.list(sessionId);
+  }
+
+  /* ---------------- ORCA 协作 ---------------- */
+
+  /**
+   * 建一个 worker：一个独立的会话 + 一条 orca_workers 记录。
+   *
+   * 为什么 worker 是独立会话而不是子 agent：
+   *   子 agent 是「一轮里临时派出去的活」，跑完就没了；
+   *   worker 要能持续接活、能被用户点进去直接对话、能跨轮存在。
+   *
+   * 硬上限 8 来自实测（8 个并发 2.2GB、延迟 +28%）。
+   * 超了直接报错而不是静默降级 —— 用户得知道为什么建不出来。
+   */
+  async createWorker(leadSessionId: string, config: OrcaWorkerConfig): Promise<OrcaWorkerRecord> {
+    const team = this.orca.createOrGetTeamForLead(leadSessionId);
+
+    const total = this.orca.countWorkers(team.id);
+    if (total >= ORCA_WORKER_HARD_LIMIT) {
+      throw new Error(
+        `worker 数量已达上限 ${ORCA_WORKER_HARD_LIMIT} 个（受内存限制），请先结束一些`,
+      );
+    }
+
+    // 继承 lead 的工作目录与模型，除非显式指定
+    const leadMeta = await this.storage.get(leadSessionId);
+    if (!leadMeta) throw new Error(`lead 会话不存在: ${leadSessionId}`);
+
+    const role = config.role || 'developer';
+    const sessionId = await this.createSession(
+      orcaWorkerSessionTitle(role, config.label ?? null),
+      config.model ?? leadMeta.model,
+      config.workingDir ?? leadMeta.workDir,
+    );
+
+    return this.orca.addWorker({
+      teamId: team.id,
+      sessionId,
+      role,
+      label: config.label ?? null,
+    });
+  }
+
+  listWorkers(leadSessionId: string): OrcaWorkerRecord[] {
+    return this.orca.listWorkersByLead(leadSessionId);
+  }
+
+  /** 验收用：拿 lead 的 active team id（验证幂等） */
+  debugOrcaTeam(leadSessionId: string): string | null {
+    return this.orca.getActiveTeamByLead(leadSessionId)?.id ?? null;
+  }
+
+  /** 某个会话是 lead 还是 worker（侧栏分组用） */
+  orcaRoleOf(sessionId: string): 'lead' | 'worker' | null {
+    if (this.orca.getWorkerBySession(sessionId)) return 'worker';
+    const row = this.db
+      .prepare('SELECT orca_role FROM sessions WHERE id = ?')
+      .get(sessionId) as { orca_role?: string | null } | undefined;
+    return row?.orca_role === 'lead' ? 'lead' : null;
   }
 
   /** 会话标题；找不到返回 null（通知里用作标题） */
