@@ -1605,6 +1605,14 @@ export class HostRuntime {
     return this.messages.list(sessionId);
   }
 
+  /** 会话标题；找不到返回 null（通知里用作标题） */
+  sessionTitle(sessionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT title FROM sessions WHERE id = ?')
+      .get(sessionId) as { title?: string } | undefined;
+    return row?.title?.trim() || null;
+  }
+
   async listSessions() {
     // 注意：status 不在 SessionMeta 里 —— 上游刻意把运行态从 SessionMeta 剔除了
     // （见 maker-core/interfaces/session-storage.ts 末尾的注释）。

@@ -33,6 +33,7 @@
 ### 产品层
 - [Phase 24](./PHASE24-REPORT.md) — 会话管理（重命名/置顶/归档/删除）
 - [Phase 25](./PHASE25-REPORT.md) — 多会话并行
+- [Phase 26](./PHASE26-REPORT.md) — 后台完成通知
 
 ### 外壳
 - [Phase 3](./PHASE3-REPORT.md) — Electron + IPC + 对话 UI
@@ -90,6 +91,7 @@
 | 长命令被误报成「没有响应」 | 只按「多久没事件」判断，没区分「有工具正在执行」 | [22](./PHASE22-REPORT.md) |
 | 最大化后记的是屏幕尺寸 | `getBounds()` 在最大化时返回全屏，应用 `getNormalBounds()` | [23](./PHASE23-REPORT.md) |
 | 切走再切回会丢后台任务 | `resume()` 无条件重建会话，订阅跟着被换掉且不报错 | [25](./PHASE25-REPORT.md) |
+| 通知节流失效 | 判断和记账分在两处；任何不经 show() 的调用都不会被节流 | [26](./PHASE26-REPORT.md) |
 
 **一句话总结**：看到「不对劲」先看数据，别看像素；看到「全绿」先问一句「它到底验了什么」。
 

@@ -13,6 +13,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
 import { readSettings, writeSettings, hasStoredKey, encryptionAvailable, settingsFilePath } from './settingsStore.js';
 import { loadWindowState, saveWindowState } from './windowState.js';
+import { notifyTurnFinished } from './notifications.js';
 import {
   IPC,
   type ApproveInput,
@@ -467,8 +468,54 @@ app.whenReady().then(async () => {
   await runtime.init();
 
   // 宿主事件 → 一条通道单向推给渲染层
+  /**
+   * 当前正在看的会话。由渲染层上报 ——
+   * 「当前会话」是 UI 概念，宿主自己猜不准（用户可能切走又切回）。
+   */
+  let currentSessionId: string | null = null;
+  /** 每个会话最近一段助手输出，用作通知摘要 */
+  const lastTextBySession = new Map<string, string>();
+  /** turnId → sessionId。text 事件只带 turnId，靠这张表找回会话归属 */
+  const sessionByTurn = new Map<string, string>();
+
+  // 宿主事件 → 一条通道单向推给渲染层，顺带判断要不要发系统通知
   runtime.onEvent((event) => {
     if (win && !win.isDestroyed()) win.webContents.send(IPC.event, event);
+
+    // 记住 turn 与会话的对应关系
+    if (event.type === 'turn') sessionByTurn.set(event.turnId, event.sessionId);
+
+    // 攒摘要：final 的那段 text 就是这轮回复的全文
+    if (event.type === 'text' && event.isFinal) {
+      const sid = sessionByTurn.get(event.turnId);
+      if (sid) lastTextBySession.set(sid, event.text);
+    }
+
+    // 轮收口时考虑发通知
+    if (event.type === 'turn' && event.state !== 'running') {
+      const title = runtime!.sessionTitle(event.sessionId) ?? '会话';
+      const preview = lastTextBySession.get(event.sessionId) ?? '';
+      notifyTurnFinished(
+        win,
+        {
+          sessionId: event.sessionId,
+          title,
+          preview,
+          state: event.state === 'error' ? 'error' : 'done',
+        },
+        event.sessionId === currentSessionId,
+        (sessionId) => {
+          // 点通知 → 让界面切过去
+          if (win && !win.isDestroyed()) win.webContents.send(IPC.focusSession, sessionId);
+        },
+      );
+      lastTextBySession.delete(event.sessionId);
+      sessionByTurn.delete(event.turnId);
+    }
+  });
+
+  ipcMain.handle(IPC.setCurrentSession, async (_e, sessionId: string | null) => {
+    currentSessionId = sessionId;
   });
 
   registerIpc();
@@ -494,7 +541,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -541,6 +588,8 @@ app.whenReady().then(async () => {
                                         ? runSessionOrgTest(win, runtime)
                                       : mode === 'parallel'
                                         ? runParallelTest(win, runtime)
+                                      : mode === 'notify'
+                                        ? runNotifyTest(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

@@ -47,6 +47,12 @@ const bridge: HostBridge = {
   listArchived: () => ipcRenderer.invoke(IPC.listArchived),
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.deleteSession, sessionId),
   listSessions: () => ipcRenderer.invoke(IPC.listSessions),
+  setCurrentSession: (sessionId) => ipcRenderer.invoke(IPC.setCurrentSession, sessionId),
+  onFocusSession: (listener) => {
+    const handler = (_e: unknown, sessionId: string) => listener(sessionId);
+    ipcRenderer.on(IPC.focusSession, handler);
+    return () => ipcRenderer.removeListener(IPC.focusSession, handler);
+  },
   sessionTree: (sessionId) => ipcRenderer.invoke(IPC.sessionTree, sessionId),
   navigateTree: (sessionId, entryId, turnIndex) =>
     ipcRenderer.invoke(IPC.navigateTree, sessionId, entryId, turnIndex),

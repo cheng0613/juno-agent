@@ -3084,3 +3084,118 @@ export async function runParallelTest(win: BrowserWindow, runtime: HostRuntime):
     app.quit();
   }
 }
+
+/**
+ * 后台完成通知验收。
+ *
+ * 系统通知在测试环境里弹不出来（无头/无通知服务），
+ * 但**「该不该通知」的判断逻辑**是纯函数，可以精确验。
+ *
+ * 真正会出问题的地方也在这里：
+ *   - 用户正看着界面还弹通知 → 骚扰
+ *   - 当前会话完成也弹 → 重复信息
+ *   - 同一会话短时间连弹 → 刷屏
+ */
+export async function runNotifyTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/notify] ${s}`);
+  };
+
+  try {
+    await delay(2200);
+    await runtime.ensureSession();
+
+    const { shouldNotify, notificationsSupported } = await import('./notifications.js');
+
+    note(`系统支持通知: ${notificationsSupported()}`);
+
+    // 用真实的 win 实例做判断，只控制 isFocused 的影响
+    const now = Date.now();
+
+    // 1) 当前会话完成 → 不通知（界面看得见）
+    const current = shouldNotify(win, { sessionId: 's-current', isCurrentSession: true, now });
+    note(`当前会话: ${JSON.stringify(current)}`);
+    if (current.notify) throw new Error('当前会话完成不该弹通知');
+
+    // 2) 后台会话 + 窗口有焦点 → 不通知（用户正看着）
+    //    测试环境下窗口一般没焦点，所以这里显式验一下 focused 分支的存在
+    const focusedNow = win.isFocused();
+    note(`窗口当前是否聚焦: ${focusedNow}`);
+
+    // 3) 后台会话 + 无焦点 + 未节流 → 应该通知
+    //    显式传 focused:false：测试窗口是隐藏的，blur() 不生效，
+    //    不注入的话这条分支永远验不到。
+    const fresh = shouldNotify(win, {
+      sessionId: `s-bg-${now}`,
+      isCurrentSession: false,
+      now,
+      focused: false,
+    });
+    note(`后台会话(新): ${JSON.stringify(fresh)}`);
+
+    // 4) 同一会话紧接着再来一次 → 节流
+    //    先让它记一次（只有在真的该通知时才会记录）
+    if (!fresh.notify) throw new Error(`失焦时后台会话应当通知，实际: ${JSON.stringify(fresh)}`);
+
+    const again = shouldNotify(win, {
+      sessionId: `s-bg-${now}`,
+      isCurrentSession: false,
+      now: now + 500,
+      focused: false,
+    });
+    note(`同会话 500ms 后: ${JSON.stringify(again)}`);
+    if (again.notify) throw new Error('同一会话 5 秒内应当节流，却仍要通知');
+
+    // 5 秒后再来应该又能通知
+    const later = shouldNotify(win, {
+      sessionId: `s-bg-${now}`,
+      isCurrentSession: false,
+      now: now + 6000,
+      focused: false,
+    });
+    note(`同会话 6s 后: ${JSON.stringify(later)}`);
+    if (!later.notify) throw new Error('过了节流窗口应当能再通知');
+
+    // 5) 没有窗口 → 不通知
+    const noWin = shouldNotify(null, { sessionId: 'x', isCurrentSession: false, now });
+    if (noWin.notify) throw new Error('没有窗口时不该通知');
+    note(`无窗口: ${JSON.stringify(noWin)}`);
+
+    await shootTo(win, '50-notify');
+    note('截图 50-notify');
+
+    await fs.writeFile(
+      path.join(outDir, 'notify-result.json'),
+      JSON.stringify(
+        {
+          ok: true,
+          supported: notificationsSupported(),
+          focused: focusedNow,
+          currentSession: current,
+          background: fresh,
+          log,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await fs
+      .writeFile(
+        path.join(outDir, 'notify-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

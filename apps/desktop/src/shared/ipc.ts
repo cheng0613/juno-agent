@@ -76,6 +76,10 @@ export const IPC = {
   deleteSession: 'host:delete-session',
   /** 渲染 → 主：只列会话（排序 / 置顶变化后重拉） */
   listSessions: 'host:list-sessions',
+  /** 渲染 → 主：上报当前正在看的会话（决定要不要发通知） */
+  setCurrentSession: 'host:set-current-session',
+  /** 主 → 渲染：点通知后要求切到某个会话 */
+  focusSession: 'host:focus-session',
   sessionTree: 'host:session-tree',
   /** 渲染 → 主：回到某个节点重来 */
   navigateTree: 'host:navigate-tree',
@@ -431,6 +435,8 @@ export interface HostBridge {
   listArchived(): Promise<ArchivedSession[]>;
   deleteSession(sessionId: string): Promise<void>;
   listSessions(): Promise<SessionSummary[]>;
+  setCurrentSession(sessionId: string | null): Promise<void>;
+  onFocusSession(listener: (sessionId: string) => void): () => void;
   sessionTree(sessionId: string): Promise<TreeEntry[]>;
   navigateTree(sessionId: string, entryId: string, turnIndex?: number): Promise<NavigateResult>;
   readModes(sessionId: string): Promise<ModeState>;

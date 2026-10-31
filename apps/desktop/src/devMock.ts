@@ -210,6 +210,10 @@ export function createMockHost(): HostBridge {
     async listSessions() {
       return [];
     },
+    async setCurrentSession() {},
+    onFocusSession() {
+      return () => undefined;
+    },
     async sessionTree() {
       return [
         {

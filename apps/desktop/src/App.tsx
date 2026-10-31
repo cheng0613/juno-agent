@@ -637,6 +637,20 @@ export function App() {
     void host.send({ sessionId: activeId, text: next }).catch(() => setRunning(false));
   }, [running, queued, activeId, host]);
 
+  const switchSessionRef = useRef<((id: string) => Promise<void>) | null>(null);
+
+  /** 当前会话变了就通知宿主：它据此决定「后台完成」要不要弹通知 */
+  useEffect(() => {
+    void host.setCurrentSession(activeId);
+  }, [host, activeId]);
+
+  /** 点系统通知后，宿主会要求切到对应会话 */
+  useEffect(() => {
+    return host.onFocusSession((sessionId) => {
+      void switchSessionRef.current?.(sessionId);
+    });
+  }, [host]);
+
   const switchSession = async (id: string) => {
     if (id === activeId) return;
     const rows = await host.loadSession(id);
@@ -740,6 +754,9 @@ export function App() {
     },
     [host, activeId, switchSession],
   );
+
+  // 让 onFocusSession 能调到最新的 switchSession
+  switchSessionRef.current = switchSession;
 
   const newSession = async () => {
     const boot = await host.createSession();
