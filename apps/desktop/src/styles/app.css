@@ -1242,3 +1242,298 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* ============================================================
+ * ORCA 协同面板
+ *
+ * 布局：和 DiffPanel 一样挂在 .main 内部右侧，宽度固定。
+ * 用 :has() 让主对话区自己让位，不必在 React 里传 class。
+ * ============================================================ */
+
+.main:has(.orca-panel) > .scroller {
+  padding-right: min(460px, 60%);
+  transition: padding-right var(--motion-base, 200ms) var(--ease-out, ease-out);
+}
+
+.sidebar .btn-orca {
+  margin: 0 var(--space-2) var(--space-2);
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+.sidebar .btn-orca:hover {
+  background: var(--accent);
+  color: var(--text-primary);
+}
+.sidebar .btn-orca.active {
+  background: var(--accent-emphasis);
+  color: var(--surface);
+}
+.sidebar .btn-orca-count {
+  margin-left: auto;
+  font-size: var(--text-11);
+  opacity: 0.7;
+}
+
+.orca-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 60%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-elevated, var(--surface));
+  border-left: 1px solid var(--border-subtle, var(--accent));
+  z-index: 5;
+}
+
+.orca-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+.orca-title {
+  font-size: var(--text-13);
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.orca-count {
+  font-size: var(--text-11);
+  font-weight: 400;
+  color: var(--text-secondary);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.orca-head-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+.orca-btn {
+  font-size: var(--text-12);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--accent);
+  cursor: pointer;
+}
+.orca-btn:hover {
+  background: var(--accent-hover, var(--accent));
+}
+.orca-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.orca-btn.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+/* 胶囊列：谁在干活的总览 */
+.orca-pills {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2);
+}
+.orca-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  background: var(--accent);
+  cursor: pointer;
+  max-width: 100%;
+}
+.orca-pill:hover {
+  color: var(--text-primary);
+}
+.orca-pill.active {
+  background: var(--accent-emphasis);
+  color: var(--surface);
+}
+.orca-pill.has-error {
+  box-shadow: inset 0 0 0 1px var(--danger, #c0392b);
+}
+.orca-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orca-pill-warn {
+  font-size: var(--text-10);
+  color: var(--warning, #b7791f);
+}
+.orca-pill.active .orca-pill-warn {
+  color: var(--surface);
+  opacity: 0.8;
+}
+
+/* 状态点 */
+.orca-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.orca-dot-idle {
+  background: var(--text-tertiary, #999);
+}
+.orca-dot-running {
+  background: var(--success, #2e8b57);
+  animation: orca-pulse 1.4s ease-in-out infinite;
+}
+.orca-dot-done {
+  background: var(--text-tertiary, #999);
+  opacity: 0.5;
+}
+.orca-dot-error {
+  background: var(--danger, #c0392b);
+}
+@keyframes orca-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orca-dot-running {
+    animation: none;
+  }
+}
+
+.orca-empty-hint,
+.orca-placeholder {
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  text-align: center;
+}
+.orca-error {
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-12);
+  color: var(--danger, #c0392b);
+  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+}
+.orca-warn {
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-11);
+  color: var(--warning-text, #8a6d3b);
+  background: color-mix(in srgb, var(--warning, #b7791f) 12%, transparent);
+}
+
+.orca-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-11);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle, var(--accent));
+  padding-bottom: var(--space-2);
+}
+.orca-meta-role {
+  font-weight: 500;
+}
+.orca-meta-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.orca-meta-toggle,
+.orca-meta-remove {
+  font-size: var(--text-11);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--accent);
+  cursor: pointer;
+}
+.orca-meta-toggle[data-isolated='1'] {
+  color: var(--success-text, #2e7d4f);
+}
+.orca-meta-remove {
+  margin-left: auto;
+  background: transparent;
+}
+.orca-meta-remove:hover {
+  color: var(--danger, #c0392b);
+}
+
+.orca-chat {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+.orca-chat-empty {
+  padding: var(--space-5) var(--space-2);
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.7;
+}
+
+.orca-composer {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border-subtle, var(--accent));
+}
+.orca-input {
+  flex: 1 1 auto;
+  resize: none;
+  font-size: var(--text-12);
+  line-height: 1.6;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg, var(--accent));
+  color: var(--text-primary);
+  border: 1px solid transparent;
+}
+.orca-input:focus {
+  outline: none;
+  border-color: var(--accent-emphasis);
+}
+.orca-send {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-12);
+  background: var(--accent-emphasis);
+  color: var(--surface);
+  cursor: pointer;
+}
+.orca-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.orca-send.stop {
+  background: var(--danger, #c0392b);
+  color: #fff;
+}

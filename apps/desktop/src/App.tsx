@@ -9,7 +9,9 @@ import { SessionItem } from './SessionItem';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusLine } from './StatusLine';
 import { TaskCard } from './TaskCard';
-import { TreePanel } from './TreePanel';import { createMockHost } from './devMock';
+import { TreePanel } from './TreePanel';
+import { WorkerPanel } from './WorkerPanel';
+import { createMockHost } from './devMock';
 import type {
   ApprovalRequest,
   ContextUsage,
@@ -24,6 +26,7 @@ import type {
   TurnDiffPayload,
   TurnStatus,
   UiMessage,
+  UiWorker,
 } from './shared/ipc';
 
 declare global {
@@ -87,6 +90,40 @@ export function App() {
   const [running, setRunning] = useState(false);
   /** 哪些会话正在跑（多会话并行时侧栏要显示出来） */
   const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+
+  /* ---- ORCA 协作 ---- */
+  /** 当前 Lead 的 worker 列表（由宿主投影推送，不自己推导） */
+  const [workers, setWorkers] = useState<UiWorker[]>([]);
+  /** 面板里选中的 worker */
+  const [activeWorkerId, setActiveWorkerId] = useState<string | null>(null);
+  /** 是否展开右侧面板 */
+  const [orcaOpen, setOrcaOpen] = useState(false);
+  /** 每个 worker 的对话缓存：切来切去不用重新拉 */
+  const workerMsgs = useRef<Map<string, UiMessage[]>>(new Map());
+  /** worker 的流式文字，和主对话分开存（否则会串台） */
+  const workerLive = useRef<Map<string, string>>(new Map());
+  /**
+   * worker 对话 + 流式文字的快照。
+   *
+   * 为什么不直接传 ref：ref 变了 React 不会重渲染，面板就永远是打开那一刻的样子。
+   * 所以每次 worker 内容变化都把 ref 里的值拷进 state 一份。
+   * 数据量不大（就几个 worker），拷一下比引入 useSyncExternalStore 简单。
+   */
+  const [workerView, setWorkerView] = useState<{
+    msgs: Record<string, UiMessage[]>;
+    live: Record<string, string>;
+  }>({ msgs: {}, live: {} });
+
+  /** 把 ref 里的最新内容同步到 state */
+  const syncWorkerView = useCallback(() => {
+    setWorkerView({
+      msgs: Object.fromEntries(workerMsgs.current),
+      live: Object.fromEntries(workerLive.current),
+    });
+  }, []);
+  const [workerBusy, setWorkerBusy] = useState<Set<string>>(new Set());
+  const [creatingWorker, setCreatingWorker] = useState(false);
+  const [workerError, setWorkerError] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   // 审批时是否记住这次选择；每次新审批重新开始
   const [remember, setRemember] = useState<'none' | 'session' | 'global'>('none');
@@ -163,6 +200,8 @@ export function App() {
    */
   const liveBySession = useRef<Map<string, string>>(new Map());
   const activeRef = useRef<string | null>(null);
+  /** sessionId → workerId。text 事件只带 sessionId，得能反查是不是 worker */
+  const workerBySessionRef = useRef<Map<string, string>>(new Map());
   activeRef.current = activeId;
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -217,6 +256,14 @@ export function App() {
   }, [host]);
 
   /* ---------------- 事件流 ---------------- */
+  // worker 列表变了就更新反查表：text 事件只带 sessionId，
+  // 得靠这张表判断「这条文字是 worker 写的还是主会话写的」
+  useEffect(() => {
+    const map = new Map<string, string>();
+    for (const w of workers) map.set(w.sessionId, w.id);
+    workerBySessionRef.current = map;
+  }, [workers]);
+
   useEffect(() => {
     const off = host.onEvent((event) => {
       switch (event.type) {
@@ -226,6 +273,19 @@ export function App() {
             ? event.text
             : (liveBySession.current.get(event.sessionId) ?? '') + event.text;
           liveBySession.current.set(event.sessionId, cached);
+
+          // worker 的流式输出去 worker 面板，不能进主对话。
+          // worker 就是个会话，不区分的话「看到 worker 干活」会变成
+          // 「主对话里莫名其妙多出别人写的字」。
+          const w = workerBySessionRef.current.get(event.sessionId);
+          if (w) {
+            const buf = event.isFinal
+              ? event.text
+              : (workerLive.current.get(w) ?? '') + event.text;
+            workerLive.current.set(w, buf);
+            syncWorkerView();
+            return;
+          }
 
           // 后台会话只缓存、不上屏（否则会串到当前对话里）
           if (event.sessionId !== activeRef.current) return;
@@ -360,6 +420,22 @@ export function App() {
 
         case 'tasks': {
           setTasks(event.tasks);
+          return;
+        }
+
+        case 'workers': {
+          // 只关心当前 Lead 的 worker —— 后台 Lead 的推送不该覆盖当前面板
+          if (event.leadSessionId !== activeRef.current) return;
+          setWorkers(event.workers);
+          setWorkerBusy(
+            new Set(event.workers.filter((w) => w.status === 'running').map((w) => w.id)),
+          );
+          // 面板开着但没选中：自动选第一个跑着的，让用户「看到有人在干活」
+          setActiveWorkerId((prev) => {
+            if (prev && event.workers.some((w) => w.id === prev)) return prev;
+            const running = event.workers.find((w) => w.status === 'running');
+            return running?.id ?? event.workers[0]?.id ?? null;
+          });
           return;
         }
 
@@ -702,7 +778,132 @@ export function App() {
     void host.readModes(id).then(setModes);
     void host.readExtraDirs(id).then(setExtraDirs);
     setDirsOpen(false);
+    // worker 属于 Lead，切会话必须重拉 —— 否则会显示上一个会话的工人
+    void loadWorkers(id);
   };
+
+  /* ---------------- ORCA 操作 ---------------- */
+
+  /** 拉某个 Lead 的 worker 列表 */
+  const loadWorkers = useCallback(async (leadId: string) => {
+    try {
+      const list = await host.listWorkers(leadId);
+      setWorkers(list);
+      setWorkerBusy(new Set(list.filter((w) => w.status === 'running').map((w) => w.id)));
+      setActiveWorkerId((prev) => {
+        if (prev && list.some((w) => w.id === prev)) return prev;
+        const running = list.find((w) => w.status === 'running');
+        return running?.id ?? list[0]?.id ?? null;
+      });
+    } catch (error) {
+      setWorkerError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  /** 打开面板：先把现有 worker 拉一遍，不然要等下次事件才有内容 */
+  const openOrca = useCallback(async () => {
+    setOrcaOpen(true);
+    setWorkerError(null);
+    if (activeId) await loadWorkers(activeId);
+  }, [activeId, loadWorkers]);
+
+  /** 建一个 worker。建完立刻选中它，让用户看见「新的人来了」 */
+  const createWorker = useCallback(async () => {
+    if (!activeId || creatingWorker) return;
+    setCreatingWorker(true);
+    setWorkerError(null);
+    try {
+      const w = await host.createWorker(activeId, { role: 'developer' });
+      setActiveWorkerId(w.id);
+      await loadWorkers(activeId);
+      // worker 会话会出现在会话表里，必须重拉一次才能把它从主列表过滤掉
+      setSessions(await host.listSessions());
+    } catch (error) {
+      setWorkerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCreatingWorker(false);
+    }
+  }, [activeId, creatingWorker, loadWorkers]);
+
+  const removeWorker = useCallback(
+    async (workerId: string) => {
+      if (!activeId) return;
+      try {
+        await host.removeWorker(workerId);
+        workerMsgs.current.delete(workerId);
+        workerLive.current.delete(workerId);
+        await loadWorkers(activeId);
+      } catch (error) {
+        setWorkerError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeId, loadWorkers],
+  );
+
+  const toggleIsolation = useCallback(
+    async (workerId: string, isolated: boolean) => {
+      if (!activeId) return;
+      try {
+        await host.setWorkerIsolation(workerId, isolated);
+        await loadWorkers(activeId);
+      } catch (error) {
+        setWorkerError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeId, loadWorkers],
+  );
+
+  /** 选中某个 worker：拉它的对话（缓存过就不重拉） */
+  const selectWorker = useCallback(async (workerId: string) => {
+    setActiveWorkerId(workerId);
+    setWorkerError(null);
+    if (workerMsgs.current.has(workerId)) return;
+    const w = workers.find((x) => x.id === workerId);
+    if (!w) return;
+    try {
+      const rows = await host.loadSession(w.sessionId);
+      workerMsgs.current.set(workerId, rows);
+      syncWorkerView();
+    } catch (error) {
+      setWorkerError(error instanceof Error ? error.message : String(error));
+    }
+  }, [workers]);
+
+  /** 给 worker 派活 */
+  const sendToWorker = useCallback(
+    async (workerId: string, text: string) => {
+      const w = workers.find((x) => x.id === workerId);
+      if (!w) return;
+      try {
+        await host.send({ sessionId: w.sessionId, text });
+        // 立刻把用户这句话塞进本地缓存：不等宿主回推，界面要先有反应
+        const rows = workerMsgs.current.get(workerId) ?? [];
+        workerMsgs.current.set(workerId, [
+          ...rows,
+          { role: 'user', text } as UiMessage,
+        ]);
+        setWorkerBusy((prev) => new Set(prev).add(workerId));
+        syncWorkerView();
+      } catch (error) {
+        setWorkerError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [workers],
+  );
+
+  const cancelWorker = useCallback(
+    async (workerId: string) => {
+      const w = workers.find((x) => x.id === workerId);
+      if (!w) return;
+      try {
+        await host.cancel(w.sessionId);
+      } catch (error) {
+        setWorkerError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [workers],
+  );
+
 
   /* ---------------- 会话管理 ---------------- */
 
@@ -862,7 +1063,8 @@ export function App() {
         </button>
 
         <nav className="session-list">
-          {sessions.map((s) => (
+          {/* worker 不进主列表 —— 它们属于 Lead，在右侧协同面板里 */}
+          {sessions.filter((s) => s.orcaRole !== 'worker').map((s) => (
             <SessionItem
               key={s.id}
               session={s}
@@ -876,6 +1078,16 @@ export function App() {
             />
           ))}
         </nav>
+
+        <button
+          type="button"
+          className={`btn-orca${orcaOpen ? ' active' : ''}`}
+          onClick={() => void (orcaOpen ? setOrcaOpen(false) : openOrca())}
+          data-testid="orca-toggle"
+        >
+          协同
+          {workers.length > 0 && <span className="btn-orca-count">{workers.length}</span>}
+        </button>
 
         <div className="sidebar-foot">
           <button className="ghost" onClick={toggleTheme}>
@@ -1203,6 +1415,24 @@ export function App() {
             busy={treeBusy}
             onNavigate={(entryId, turnIndex) => void replayFrom(entryId, turnIndex)}
             onClose={() => setTreeOpen(false)}
+          />
+        )}
+        {orcaOpen && (
+          <WorkerPanel
+            workers={workers}
+            activeWorkerId={activeWorkerId}
+            messagesByWorker={Object.fromEntries(workerMsgs.current)}
+            liveByWorker={Object.fromEntries(workerLive.current)}
+            busyWorkerIds={workerBusy}
+            onSelect={(id) => void selectWorker(id)}
+            onClose={() => setOrcaOpen(false)}
+            onCreate={() => void createWorker()}
+            onRemove={(id) => void removeWorker(id)}
+            onToggleIsolation={(id, iso) => void toggleIsolation(id, iso)}
+            onSend={(id, text) => void sendToWorker(id, text)}
+            onCancel={(id) => void cancelWorker(id)}
+            creating={creatingWorker}
+            error={workerError}
           />
         )}
       </main>

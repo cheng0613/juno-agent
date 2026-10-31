@@ -46,6 +46,13 @@ const bridge: HostBridge = {
   unarchiveSession: (sessionId) => ipcRenderer.invoke(IPC.unarchiveSession, sessionId),
   listArchived: () => ipcRenderer.invoke(IPC.listArchived),
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.deleteSession, sessionId),
+  listWorkers: (leadSessionId) => ipcRenderer.invoke(IPC.listWorkers, leadSessionId),
+  createWorker: (leadSessionId, config) =>
+    ipcRenderer.invoke(IPC.createWorker, leadSessionId, config),
+  removeWorker: (workerId) => ipcRenderer.invoke(IPC.removeWorker, workerId),
+  setWorkerIsolation: (workerId, isolated) =>
+    ipcRenderer.invoke(IPC.setWorkerIsolation, workerId, isolated),
+  orcaRoleOf: (sessionId) => ipcRenderer.invoke(IPC.orcaRoleOf, sessionId),
   listSessions: () => ipcRenderer.invoke(IPC.listSessions),
   setCurrentSession: (sessionId) => ipcRenderer.invoke(IPC.setCurrentSession, sessionId),
   onFocusSession: (listener) => {

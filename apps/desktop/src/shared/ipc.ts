@@ -83,9 +83,43 @@ export const IPC = {
   sessionTree: 'host:session-tree',
   /** 渲染 → 主：回到某个节点重来 */
   navigateTree: 'host:navigate-tree',
+  /* ---- ORCA 协作 ---- */
+  /** 渲染 → 主：列某个 Lead 下的 worker */
+  listWorkers: 'host:list-workers',
+  /** 渲染 → 主：建 worker */
+  createWorker: 'host:create-worker',
+  /** 渲染 → 主：移除 worker（只断开关联，不删会话） */
+  removeWorker: 'host:remove-worker',
+  /** 渲染 → 主：切换 worker 的工作区隔离 */
+  setWorkerIsolation: 'host:set-worker-isolation',
+  /** 渲染 → 主：某个会话是 lead 还是 worker */
+  orcaRoleOf: 'host:orca-role-of',
   /** 主 → 渲染：宿主状态事件流 */
   event: 'host:event',
 } as const;
+
+/**
+ * ORCA worker 的界面投影。
+ *
+ * 刻意不做成「worker 的会话对象」——渲染层不需要知道 worker 背后是个会话，
+ * 它只需要知道：叫什么、在干什么、在哪干活。
+ */
+export interface UiWorker {
+  id: string;
+  sessionId: string;
+  role: string;
+  label: string;
+  /** idle 空闲 / running 干活中 / done 本轮完成 / error 出错 */
+  status: 'idle' | 'running' | 'done' | 'error';
+  focused: boolean;
+  /** 是否独立工作区（git worktree）。false 表示和 Lead 共享目录，有覆盖风险 */
+  isolated: boolean;
+  isolationReason?: string;
+  /** worker 实际工作目录 */
+  workingDir: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
 
 export type ApprovalKind = 'permission' | 'ask_user_question' | 'plan_review';
 
@@ -137,6 +171,12 @@ export interface SessionSummary {
   updatedAt: number;
   /** 置顶的排在列表最前 */
   pinned?: boolean;
+  /**
+   * ORCA 角色。worker 不从主列表里显示 ——
+   * 它们属于某个 Lead，属于右侧协同面板，混在主列表里的话
+   * 用户会以为那是自己开的会话。
+   */
+  orcaRole?: 'lead' | 'worker';
 }
 
 /** 已归档的会话 */
@@ -329,6 +369,13 @@ export type HostEvent =
   | { type: 'status'; sessionId: string; status: TurnStatus | null }
   /** 子任务进度：状态快照，UI 直接整张表替换 */
   | { type: 'tasks'; tasks: TaskInfo[] }
+  /**
+   * ORCA worker 状态变化。
+   *
+   * 带 leadSessionId 而不是 workerId：渲染层拿 lead 就能确定
+   * 「哪个面板该刷新」，不用反查 worker 属于谁。
+   */
+  | { type: 'workers'; leadSessionId: string; workers: UiWorker[] }
   | { type: 'error'; sessionId?: string; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
@@ -435,6 +482,18 @@ export interface HostBridge {
   listArchived(): Promise<ArchivedSession[]>;
   deleteSession(sessionId: string): Promise<void>;
   listSessions(): Promise<SessionSummary[]>;
+
+  /* ---- ORCA 协作 ---- */
+  listWorkers(leadSessionId: string): Promise<UiWorker[]>;
+  createWorker(
+    leadSessionId: string,
+    config: { role: string; label?: string; isolate?: boolean },
+  ): Promise<UiWorker>;
+  /** 只断开关联，不删会话 */
+  removeWorker(workerId: string): Promise<void>;
+  /** 切换隔离；返回切换后的 worker */
+  setWorkerIsolation(workerId: string, isolated: boolean): Promise<UiWorker>;
+  orcaRoleOf(sessionId: string): Promise<'lead' | 'worker' | null>;
   setCurrentSession(sessionId: string | null): Promise<void>;
   onFocusSession(listener: (sessionId: string) => void): () => void;
   sessionTree(sessionId: string): Promise<TreeEntry[]>;

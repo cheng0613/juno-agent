@@ -37,6 +37,9 @@
 - [Phase 27](./PHASE27-REPORT.md) — 跨会话事件路由
 - [Phase 28](./PHASE28-REPORT.md) — 实时流式可见
 - [Phase 29](./PHASE29-REPORT.md) — 改名为 Juno
+- [ORCA 数据层](./PHASE30-ORCA-DATA.md) — 数据模型 + 并发上限
+- [ORCA 隔离](./PHASE31-ORCA-ISOLATION.md) — worktree + 权限档位
+- [ORCA 面板](./PHASE32-ORCA-UI.md) — 右侧协同面板
 
 ### 外壳
 - [Phase 3](./PHASE3-REPORT.md) — Electron + IPC + 对话 UI

@@ -207,6 +207,21 @@ export function createMockHost(): HostBridge {
       return [];
     },
     async deleteSession() {},
+
+    /* ORCA：预览模式下一个 worker 都没有，面板自然不显示 */
+    async listWorkers() {
+      return [];
+    },
+    async createWorker() {
+      throw new Error('预览模式不能建 worker');
+    },
+    async removeWorker() {},
+    async setWorkerIsolation() {
+      throw new Error('预览模式不能改隔离');
+    },
+    async orcaRoleOf() {
+      return null;
+    },
     async listSessions() {
       return [];
     },

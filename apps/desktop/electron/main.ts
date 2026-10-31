@@ -375,6 +375,29 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.listSessions, async () => runtime!.listSessions());
 
+  /* ---- ORCA ---- */
+  ipcMain.handle(IPC.listWorkers, async (_e, leadSessionId: string) =>
+    runtime!.listWorkers(leadSessionId),
+  );
+
+  ipcMain.handle(
+    IPC.createWorker,
+    async (_e, leadSessionId: string, config: { role: string; label?: string; isolate?: boolean }) =>
+      runtime!.createWorker(leadSessionId, config),
+  );
+
+  ipcMain.handle(IPC.removeWorker, async (_e, workerId: string) => {
+    runtime!.removeWorker(workerId);
+  });
+
+  ipcMain.handle(
+    IPC.setWorkerIsolation,
+    async (_e, workerId: string, isolated: boolean) =>
+      runtime!.setWorkerIsolation(workerId, isolated),
+  );
+
+  ipcMain.handle(IPC.orcaRoleOf, async (_e, sessionId: string) => runtime!.orcaRoleOf(sessionId));
+
   ipcMain.handle(IPC.restartApp, async () => {
     // 配置只在启动时读一次，重启是最简单可靠的生效方式
     app.relaunch();
@@ -546,7 +569,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -603,6 +626,8 @@ app.whenReady().then(async () => {
                                         ? runOrcaDataTest(win, runtime)
                                       : mode === 'orca-iso'
                                         ? runOrcaIsolationTest(win, runtime)
+                                      : mode === 'orca-ui'
+                                        ? runOrcaUiTest(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

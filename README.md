@@ -35,6 +35,9 @@
 | Phase 27 | 跨会话事件路由（B 类） | [报告](./docs/PHASE27-REPORT.md) |
 | Phase 28 | 实时流式可见（B 类） | [报告](./docs/PHASE28-REPORT.md) |
 | Phase 29 | 改名为 Juno | [报告](./docs/PHASE29-REPORT.md) |
+| ORCA-1 | 数据层 + 并发上限 | [报告](./docs/PHASE30-ORCA-DATA.md) |
+| ORCA-2 | worktree 隔离 + 权限 | [报告](./docs/PHASE31-ORCA-ISOLATION.md) |
+| ORCA-3 | 右侧协同面板 | [报告](./docs/PHASE32-ORCA-UI.md) |
 
 报告索引与踩坑汇总见 [docs/README.md](./docs/README.md)。
 

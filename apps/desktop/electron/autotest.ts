@@ -3727,3 +3727,198 @@ export async function runOrcaIsolationTest(win: BrowserWindow, runtime: HostRunt
     app.quit();
   }
 }
+
+/**
+ * ORCA 阶段二验收：右侧 worker 面板。
+ *
+ * **必须走 UI 路径**：点「协同」按钮开面板，点「+ Worker」建 worker。
+ * 直接调 runtime.createWorker() 不会更新 React state —— 这个坑记了三次了，
+ * 验出来的东西和用户看到的不是一回事。
+ */
+export async function runOrcaUiTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/orca-ui] ${s}`);
+  };
+  const check = (cond: boolean, msg: string) => {
+    if (!cond) throw new Error(msg);
+  };
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+
+  try {
+    await delay(2200);
+    const leadId = await runtime.ensureSession();
+
+    /* 前置：工作目录必须是 git 仓库，否则 worktree 无法建立 ——
+     * 那时「切不回隔离」是**正确降级**，不是 bug。测试要能区分这两件事。 */
+    const repo = (await runtime.debugSessionMeta(leadId)).workDir;
+    await fs.mkdir(repo, { recursive: true });
+    await runGit('git', ['init', '-q'], { cwd: repo }).catch(() => undefined);
+    await fs.writeFile(path.join(repo, 'README.md'), '# demo\n', 'utf8');
+    await runGit('git', ['add', '-A'], { cwd: repo });
+    await runGit(
+      'git',
+      ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'],
+      { cwd: repo },
+    ).catch(() => undefined);
+    note('仓库已就绪');
+
+    await shootTo(win, '60-orca-before');
+
+    /* ---- 1. 点「协同」按钮打开面板 ---- */
+    await js(
+      `document.querySelector('[data-testid="orca-toggle"]')?.click()`,
+    );
+    await delay(600);
+    const panelOpen = await js(`!!document.querySelector('[data-testid="orca-panel"]')`);
+    note(`面板打开: ${panelOpen}`);
+    check(panelOpen === true, '点协同按钮后面板没出现');
+    await shootTo(win, '61-orca-empty');
+
+    /* ---- 2. 点「+ Worker」建三个 worker ---- */
+    for (let i = 1; i <= 3; i += 1) {
+      await js(`document.querySelector('[data-testid="orca-create"]')?.click()`);
+      await delay(1800);
+      const n = await js(`document.querySelectorAll('[data-testid="orca-pill"]').length`);
+      note(`建第 ${i} 个后胶囊数: ${n}`);
+    }
+
+    const pills = await js(
+      `[...document.querySelectorAll('[data-testid="orca-pill"]')].map(p => ({
+         label: p.querySelector('.orca-pill-label')?.textContent,
+         status: p.dataset.workerStatus,
+       }))`,
+    );
+    note(`胶囊: ${JSON.stringify(pills)}`);
+    check(Array.isArray(pills) && pills.length === 3, `应有 3 个 worker，实际 ${pills?.length}`);
+    await shootTo(win, '62-orca-three-workers');
+
+    /* ---- 2b. worker 不能出现在左侧主列表里 ---- */
+    const sidebarTitles = await js(
+      `[...document.querySelectorAll('.session-list [data-session-id]')]
+         .map(el => el.textContent?.trim() ?? '')`,
+    );
+    note(`侧栏条目: ${JSON.stringify(sidebarTitles)}`);
+    const leaked = sidebarTitles.filter((t: string) => t.startsWith('developer'));
+    check(
+      leaked.length === 0,
+      `worker 漏进了主列表: ${JSON.stringify(leaked)}（应该只在右侧协同面板里）`,
+    );
+
+    /* ---- 3. 点选第二个 worker，面板应切过去 ---- */
+    await js(
+      `document.querySelectorAll('[data-testid="orca-pill"]')[1]?.click()`,
+    );
+    await delay(800);
+    const activeLabel = await js(
+      `document.querySelector('.orca-meta-role')?.textContent`,
+    );
+    note(`选中后 role: ${activeLabel}`);
+    check(activeLabel !== null, '选中 worker 后没有显示详情');
+    await shootTo(win, '63-orca-selected');
+
+    /* ---- 4. 给 worker 派活，看它真的干活 ---- */
+    const workerId = await js(
+      `document.querySelectorAll('[data-testid="orca-pill"]')[1]?.dataset.workerId`,
+    );
+    const sessionId = runtime.listWorkers(await runtime.ensureSession()).find(
+      (w) => w.id === workerId,
+    )?.sessionId;
+    note(`worker sessionId: ${sessionId?.slice(0, 8)}`);
+
+    // 通过 UI 输入框派活
+    await js(
+      `(() => {
+         const ta = document.querySelector('[data-testid="orca-input"]');
+         const setter = Object.getOwnPropertyDescriptor(
+           window.HTMLTextAreaElement.prototype, 'value').set;
+         setter.call(ta, '数一下 1 加到 100 是多少，直接给数字');
+         ta.dispatchEvent(new Event('input', { bubbles: true }));
+       })()`,
+    );
+    await delay(400);
+    await shootTo(win, '64-orca-typed');
+
+    await js(`document.querySelector('[data-testid="orca-send"]')?.click()`);
+    note('已派活');
+
+    /* ---- 5. 等 worker 干活，中途截图证明「看得到它在动」 ---- */
+    await delay(2500);
+    await shootTo(win, '65-orca-worker-running');
+
+    const runningStatus = await js(
+      `document.querySelectorAll('[data-testid="orca-pill"]')[1]?.dataset.workerStatus`,
+    );
+    note(`派活后状态: ${runningStatus}`);
+
+    // 等到 done（最多 90 秒）
+    let finalStatus = runningStatus;
+    for (let i = 0; i < 45; i += 1) {
+      await delay(2000);
+      finalStatus = await js(
+        `document.querySelectorAll('[data-testid="orca-pill"]')[1]?.dataset.workerStatus`,
+      );
+      if (finalStatus === 'done' || finalStatus === 'error') break;
+    }
+    note(`最终状态: ${finalStatus}`);
+    check(finalStatus === 'done', `worker 应跑完，实际状态 ${finalStatus}`);
+    await shootTo(win, '66-orca-worker-done');
+
+    /* ---- 6. 面板里能看到对话内容 ---- */
+    // 不猜 class 名：直接看面板里有没有「用户那句话」和「答案」
+    const hasContent = await js(
+      `(() => {
+         const t = document.querySelector('.orca-chat')?.textContent ?? '';
+         return t.includes('1 加到 100') && t.includes('5050');
+       })()`,
+    );
+    const chatText = await js(
+      `document.querySelector('.orca-chat')?.textContent?.slice(0, 200) ?? ''`,
+    );
+    note(`面板里有对话内容: ${hasContent}, 文本开头: ${chatText.slice(0, 60)}`);
+    check(hasContent === true, '面板里看不到「派活」和「回答」，用户就没法确认它真干了');
+
+    /* ---- 7. 隔离状态可切换 ---- */
+    const before = await js(
+      `document.querySelector('[data-testid="orca-isolation-toggle"]')?.dataset.isolated`,
+    );
+    await js(`document.querySelector('[data-testid="orca-isolation-toggle"]')?.click()`);
+    await delay(1200);
+    const after = await js(
+      `document.querySelector('[data-testid="orca-isolation-toggle"]')?.dataset.isolated`,
+    );
+    note(`隔离切换: ${before} → ${after}`);
+    check(before !== after, '隔离切换没生效');
+    await shootTo(win, '67-orca-isolation-toggled');
+
+    /* ---- 8. 关闭面板 ---- */
+    await js(`document.querySelector('[data-testid="orca-toggle"]')?.click()`);
+    await delay(500);
+    const closed = await js(`!document.querySelector('[data-testid="orca-panel"]')`);
+    note(`面板已关闭: ${closed}`);
+    check(closed === true, '点协同按钮没关掉面板');
+
+    await fs.writeFile(
+      path.join(outDir, 'orca-ui-result.json'),
+      JSON.stringify({ ok: true, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-orca-ui-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'orca-ui-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

@@ -847,6 +847,8 @@ export class HostRuntime {
     this.activeTurns.set(sessionId, turn.turnId);
     this.activeTurnSessionId = sessionId;
     this.emit({ type: 'turn', sessionId, turnId: turn.turnId, state: 'running' });
+    // worker 开始干活了：胶囊要立刻变成「干活中」，不能等轮结束才更新
+    this.syncWorkerStateBySession(sessionId, 'running');
 
     // 同一轮可能收到多个终态事件（引擎的 done 与会话收口事件），
     // 收口只能通知一次 —— 渲染层依赖它去重拉历史、去推进队列
@@ -862,6 +864,8 @@ export class HostRuntime {
         settled = true;
         const state = event.type === 'error' ? 'error' : 'done';
         this.emit({ type: 'turn', sessionId, turnId: turn.turnId, state });
+        // worker 跑完了要让面板知道（胶囊从「干活中」变成「完成」）
+        this.syncWorkerStateBySession(sessionId, state);
         // 状态行必须跟着消失，否则界面上会一直挂着「正在执行命令」
         this.emit({ type: 'status', sessionId, status: null });
         this.toolByTurn.delete(turn.turnId);
@@ -1519,6 +1523,61 @@ export class HostRuntime {
   }
 
   /** 模式变化统一从这里广播，避免三个调用点各拼一遍字段 */
+  /* ---------------- ORCA 状态投影 ---------------- */
+
+  /**
+   * 把 worker 的可变状态投影成 UI 结构并发出去。
+   *
+   * 状态分两层：
+   *   - 数据库里的 orca_workers.status：持久状态（idle/running/done/error）
+   *   - 引擎正在跑：实时
+   *
+   * UI 要的是「现在在干什么」，所以这里以数据库为准 —— 数据库是在
+   * 事件回调里同步更新的，两边不会漂。
+   */
+  private emitWorkers(leadSessionId: string): void {
+    try {
+      const workers = this.orca.listWorkersByLead(leadSessionId);
+      this.emit({
+        type: 'workers',
+        leadSessionId,
+        workers: workers.map((w) => ({
+          id: w.id,
+          sessionId: w.sessionId,
+          role: w.role,
+          label: w.label ?? w.role,
+          status: w.status,
+          focused: w.focused,
+          isolated: w.isolated === true,
+          ...(w.isolationReason ? { isolationReason: w.isolationReason } : {}),
+          workingDir: this.workerWorkingDir(w.id),
+          createdAt: w.createdAt,
+          updatedAt: w.updatedAt,
+        })),
+      });
+    } catch (error) {
+      console.warn('[orca] 投影 worker 状态失败:', String(error));
+    }
+  }
+
+  /**
+   * 会话的轮状态变了，如果它是 worker，就同步 worker 状态并通知面板。
+   *
+   * 为什么在这里做而不是在事件回调里逐条处理：
+   * 轮状态只有三种归宿（结束/出错/取消），在终点统一处理比在
+   * 每个事件里判断「这是不是 worker」更不容易漏。
+   */
+  private syncWorkerStateBySession(sessionId: string, state: 'running' | 'done' | 'error' | 'idle'): void {
+    const worker = this.orca.getWorkerBySession(sessionId);
+    if (!worker) return;
+    this.orca.updateWorkerStatus(worker.id, state);
+    const team = this.orca.getTeamByWorkerSession(sessionId);
+    const leadId = this.db
+      .prepare('SELECT lead_session_id AS id FROM orca_teams WHERE id = ?')
+      .get(worker.teamId) as { id: string } | undefined;
+    if (leadId) this.emitWorkers(leadId.id);
+  }
+
   private emitModes(): void {
     this.emit({
       type: 'modes',
@@ -1717,6 +1776,23 @@ export class HostRuntime {
   }
 
   /**
+   * 移除 worker。
+   *
+   * **只断开关联，不删会话。** 用户可能已经在里面聊了很久，
+   * 删了就是永久失去——想找回就只能去数据库里挖。
+   * 会话会重新回到主列表，就像个普通会话。
+   */
+  removeWorker(workerId: string): void {
+    const worker = this.orca.getWorker(workerId);
+    if (!worker) return;
+    const leadId = this.db
+      .prepare('SELECT lead_session_id AS id FROM orca_teams WHERE id = ?')
+      .get(worker.teamId) as { id: string } | undefined;
+    this.orca.removeWorker(workerId);
+    if (leadId) this.emitWorkers(leadId.id);
+  }
+
+  /**
    * 切换 worker 的工作区隔离 —— 用户随时可以改。
    *
    * 两种情况：
@@ -1858,7 +1934,7 @@ export class HostRuntime {
     // 不能只按 updated_at —— 置顶就是为了让它不被新会话挤下去。
     const rows = this.db
       .prepare(
-        `SELECT id, title, model, status, updated_at, pinned_at
+        `SELECT id, title, model, status, updated_at, pinned_at, orca_role
            FROM sessions
           WHERE archived_at IS NULL
           ORDER BY pinned_at IS NULL, pinned_at DESC, updated_at DESC`,
@@ -1870,6 +1946,7 @@ export class HostRuntime {
       status: string;
       updated_at: number;
       pinned_at: number | null;
+      orca_role: string | null;
     }>;
     return rows.map((r) => ({
       id: r.id,
@@ -1878,6 +1955,7 @@ export class HostRuntime {
       status: r.status,
       updatedAt: r.updated_at,
       pinned: r.pinned_at !== null,
+      ...(r.orca_role ? { orcaRole: r.orca_role as 'lead' | 'worker' } : {}),
     }));
   }
 
