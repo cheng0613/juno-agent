@@ -306,10 +306,10 @@ export interface TestResult {
 
 /** 宿主 → 渲染 的事件 */
 export type HostEvent =
-  | { type: 'text'; turnId: string; text: string; isFinal: boolean }
-  | { type: 'thinking'; turnId: string; text: string; isFinal: boolean }
-  | { type: 'tool_use'; turnId: string; toolUseId: string; toolName: string; input: unknown }
-  | { type: 'tool_result'; turnId: string; toolUseId: string; output: string; isError: boolean }
+  | { type: 'text'; sessionId: string; turnId: string; text: string; isFinal: boolean }
+  | { type: 'thinking'; sessionId: string; turnId: string; text: string; isFinal: boolean }
+  | { type: 'tool_use'; sessionId: string; turnId: string; toolUseId: string; toolName: string; input: unknown }
+  | { type: 'tool_result'; sessionId: string; turnId: string; toolUseId: string; output: string; isError: boolean }
   | {
       type: 'turn';
       sessionId: string;
@@ -326,10 +326,10 @@ export type HostEvent =
   | { type: 'modes'; permissionMode: PermissionModeChoice; planMode: boolean; effort: string | null; effortLevels: string[] }
   | { type: 'model'; modelId: string }
   /** 状态变化（是否在跑 + 在干什么）；null = 已结束 */
-  | { type: 'status'; status: TurnStatus | null }
+  | { type: 'status'; sessionId: string; status: TurnStatus | null }
   /** 子任务进度：状态快照，UI 直接整张表替换 */
   | { type: 'tasks'; tasks: TaskInfo[] }
-  | { type: 'error'; message: string };
+  | { type: 'error'; sessionId?: string; message: string };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
 export interface CompactResult {

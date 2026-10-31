@@ -841,7 +841,7 @@ export class HostRuntime {
       // 订阅排在被顶掉之后仍可能收到残留事件；不是自己这轮的就不认
       if (settled) return;
       this.recorder.onEvent(sessionId, turn.turnId, 'pi', event);
-      this.project(event, turn.turnId);
+      this.project(event, sessionId, turn.turnId);
       this.traceEvent(event);
 
       if (event.turnScope !== 'background' && isTerminalTurnEvent(event)) {
@@ -849,7 +849,7 @@ export class HostRuntime {
         const state = event.type === 'error' ? 'error' : 'done';
         this.emit({ type: 'turn', sessionId, turnId: turn.turnId, state });
         // 状态行必须跟着消失，否则界面上会一直挂着「正在执行命令」
-        this.emit({ type: 'status', status: null });
+        this.emit({ type: 'status', sessionId, status: null });
         this.toolByTurn.delete(turn.turnId);
         this.lastUsageTokens.delete(turn.turnId);
         this.lastEventAt.delete(turn.turnId);
@@ -914,7 +914,7 @@ export class HostRuntime {
   }
 
   /** AgentEvent → 渲染层事件。只映射 UI 需要的，不做业务判断 */
-  private project(event: AgentEvent, turnId: string): void {
+  private project(event: AgentEvent, sessionId: string, turnId: string): void {
     switch (event.type) {
       case 'text': {
         const d = event.data as { text?: string; isFinal?: boolean };
@@ -923,12 +923,14 @@ export class HostRuntime {
         if (typeof meta?.usage?.totalTokens === 'number') {
           this.lastUsageTokens.set(turnId, meta.usage.totalTokens);
         }
-        if (d?.text) this.emit({ type: 'text', turnId, text: d.text, isFinal: d.isFinal === true });
+        if (d?.text)
+          this.emit({ type: 'text', sessionId, turnId, text: d.text, isFinal: d.isFinal === true });
         return;
       }
       case 'thinking': {
         const d = event.data as { text?: string; isFinal?: boolean };
-        if (d?.text) this.emit({ type: 'thinking', turnId, text: d.text, isFinal: d.isFinal === true });
+        if (d?.text)
+          this.emit({ type: 'thinking', sessionId, turnId, text: d.text, isFinal: d.isFinal === true });
         return;
       }
       case 'tool_use': {
@@ -939,6 +941,7 @@ export class HostRuntime {
         this.runningTools.set(turnId, String(d?.toolUseId ?? toolName));
         this.emit({
           type: 'tool_use',
+          sessionId,
           turnId,
           toolUseId: String(d?.toolUseId ?? ''),
           toolName,
@@ -952,6 +955,7 @@ export class HostRuntime {
         this.runningTools.delete(turnId);
         this.emit({
           type: 'tool_result',
+          sessionId,
           turnId,
           toolUseId: String(d?.toolUseId ?? ''),
           output: String(d?.fullText ?? ''),
@@ -961,7 +965,7 @@ export class HostRuntime {
       }
       case 'error': {
         const d = event.data as Record<string, unknown>;
-        this.emit({ type: 'error', message: String(d?.message ?? 'unknown error') });
+        this.emit({ type: 'error', sessionId, message: String(d?.message ?? 'unknown error') });
         return;
       }
       case 'compact_boundary': {
@@ -976,7 +980,7 @@ export class HostRuntime {
         return;
       }
       case 'status': {
-        this.projectStatus(event, turnId);
+        this.projectStatus(event, sessionId, turnId);
         return;
       }
       case 'agent_task_update': {
@@ -1429,13 +1433,13 @@ export class HostRuntime {
    * 引擎给的 status 文本是英文（Working… / Compacting context…），
    * 这里翻成人话；翻不了就原样透传，总比不显示强。
    */
-  private projectStatus(event: AgentEvent, turnId: string): void {
+  private projectStatus(event: AgentEvent, sessionId: string, turnId: string): void {
     // 只要收到任何事件就算「活着」，含思考/工具/状态本身
     this.lastEventAt.set(turnId, Date.now());
 
     const d = (event.data ?? {}) as { status?: string; isRunning?: boolean };
     if (d.isRunning === false) {
-      this.emit({ type: 'status', status: null });
+      this.emit({ type: 'status', sessionId, status: null });
       return;
     }
 
@@ -1449,6 +1453,7 @@ export class HostRuntime {
 
     this.emit({
       type: 'status',
+      sessionId,
       status: {
         label,
         startedAt,

@@ -74,7 +74,7 @@ export function createMockHost(): HostBridge {
       emit({ type: 'turn', sessionId: 'mock-session', turnId, state: 'running' });
 
       await sleep(400);
-      emit({ type: 'tool_use', turnId, toolUseId: 't2', toolName: 'bash', input: { command: 'cat hello.txt' } });
+      emit({ type: 'tool_use', sessionId: 'mock-session', turnId, toolUseId: 't2', toolName: 'bash', input: { command: 'cat hello.txt' } });
       await sleep(500);
 
       // 演示审批卡：真实环境由主进程按需抛过来
@@ -92,10 +92,10 @@ export function createMockHost(): HostBridge {
     async approve({ requestId }) {
       emit({ type: 'approval_settled', requestId });
       const turnId = 'turn-mock';
-      emit({ type: 'tool_result', turnId, toolUseId: 't2', output: 'hi from spike', isError: false });
+      emit({ type: 'tool_result', sessionId: 'mock-session', turnId, toolUseId: 't2', output: 'hi from spike', isError: false });
       for (const chunk of ['文件内容是 ', '`hi from spike`', '，一切正常。']) {
         await sleep(180);
-        emit({ type: 'text', turnId, text: chunk, isFinal: false });
+        emit({ type: 'text', sessionId: 'mock-session', turnId, text: chunk, isFinal: false });
       }
       emit({ type: 'turn', sessionId: 'mock-session', turnId, state: 'done' });
     },

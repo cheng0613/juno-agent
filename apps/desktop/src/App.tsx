@@ -211,6 +211,10 @@ export function App() {
     const off = host.onEvent((event) => {
       switch (event.type) {
         case 'text': {
+          // 多会话并行：后台会话的事件不能进当前会话的界面。
+          // 不加这道判断的话，后台会话的流式文字会串到当前对话里。
+          if (event.sessionId !== activeRef.current) return;
+
           if (event.isFinal) {
             // 终态文本整条替换，避免增量拼接重复
             liveRef.current = event.text;
@@ -223,6 +227,10 @@ export function App() {
         }
 
         case 'thinking': {
+          // 多会话并行：后台会话的事件不能进当前会话的界面。
+          // 不加这道判断的话，后台会话的流式文字会串到当前对话里。
+          if (event.sessionId !== activeRef.current) return;
+
           if (!event.isFinal) return;
           setMessages((prev) => [
             ...prev,
@@ -232,6 +240,10 @@ export function App() {
         }
 
         case 'tool_use': {
+          // 多会话并行：后台会话的事件不能进当前会话的界面。
+          // 不加这道判断的话，后台会话的流式文字会串到当前对话里。
+          if (event.sessionId !== activeRef.current) return;
+
           setMessages((prev) => [
             ...prev,
             {
@@ -246,6 +258,10 @@ export function App() {
         }
 
         case 'tool_result': {
+          // 多会话并行：后台会话的事件不能进当前会话的界面。
+          // 不加这道判断的话，后台会话的流式文字会串到当前对话里。
+          if (event.sessionId !== activeRef.current) return;
+
           setMessages((prev) => [
             ...prev,
             {
@@ -323,6 +339,10 @@ export function App() {
         }
 
         case 'status': {
+          // 多会话并行：后台会话的事件不能进当前会话的界面。
+          // 不加这道判断的话，后台会话的流式文字会串到当前对话里。
+          if (event.sessionId !== activeRef.current) return;
+
           setTurnStatus(event.status);
           return;
         }

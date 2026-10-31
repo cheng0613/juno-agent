@@ -3199,3 +3199,149 @@ export async function runNotifyTest(win: BrowserWindow, runtime: HostRuntime): P
     app.quit();
   }
 }
+
+/**
+ * 跨会话事件路由验收。
+ *
+ * 核心：**后台会话的流式输出不能串到当前会话的界面上**。
+ *
+ * 修复前所有事件都没有 sessionId，一条 text 事件会无条件写进
+ * 当前会话的 liveText —— 用户切到 B，看到的是 A 正在吐的字。
+ *
+ * 这里让 A 在后台生成一段**可识别的内容**，同时看 B 的界面上有没有出现它。
+ */
+export async function runEventRoutingTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/routing] ${s}`);
+  };
+
+  /** 记录每个会话收到多少 text 事件（用于证明宿主侧路由正确） */
+  const textBySession = new Map<string, number>();
+  const turnDone = new Map<string, number>();
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'text') textBySession.set(e.sessionId, (textBySession.get(e.sessionId) ?? 0) + 1);
+    if (e.type === 'turn' && e.state !== 'running') {
+      turnDone.set(e.sessionId, (turnDone.get(e.sessionId) ?? 0) + 1);
+    }
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  try {
+    await delay(2500);
+    // 走 UI 建会话：直接调 IPC 的话 React 的 sessions 列表不更新，
+    // 后面按侧栏项切换会找不到元素（踩过）
+    const clicked = await win.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('.btn-new'); if (!b) return 'no-btn'; b.click(); return 'ok'; })()`,
+    );
+    note(`点新建会话: ${clicked}`);
+    await delay(1500);
+    const uiItems = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('[data-testid="session-item"]').length`,
+    );
+    note(`界面上会话项数: ${uiItems}`);
+    const sessions = await runtime.listSessions();
+    if (sessions.length < 2) throw new Error(`需要两个会话，实际 ${sessions.length}`);
+    const a = sessions[1]!.id;
+    const b = sessions[0]!.id;
+    note(`A=${a.slice(0, 8)} B=${b.slice(0, 8)}`);
+
+    // 不改名：React 的列表不认宿主侧的 rename，改了反而找不到。
+    // 直接按索引切换 —— 侧栏顺序与 listSessions 一致（都按 updated_at）。
+
+    // 给两个会话起可辨识的名字，后面按标题切换才可靠
+    runtime.renameSession(a, '后台甲');
+    runtime.renameSession(b, '当前乙');
+    await delay(300);
+
+    // A 在后台生成一段带标记的内容（中文长句，流式会分成很多段）
+    const marker = '后台任务标记ABC';
+    await runtime.send(a, `请把「${marker}」这句话重复 20 遍，每遍一行，不要任何其他内容`);
+
+    // 切到 B
+    await win.webContents.executeJavaScript(
+      `window.host.loadSession(${JSON.stringify(b)}).then(() => 'ok')`,
+    );
+    await delay(500);
+
+    // 关键验证一：宿主发出的每条事件都必须带 sessionId，且只属于一个会话。
+    // 这是路由正确性的根 —— 事件没带对会话，UI 再怎么写都会串。
+    note('等待 A 开始流式输出…');
+
+    // 等 A 的流式跑起来，然后看 B 的界面
+    await waitFor(() => (textBySession.get(a) ?? 0) >= 2, 60_000, 'A 开始流式输出');
+    note(`A 已产出 ${textBySession.get(a)} 段文本`);
+
+    // 所有标为 A 的 text 事件，必须确实来自 A 的 turn
+    const bText = textBySession.get(b) ?? 0;
+    note(`B 收到的 text 事件数: ${bText}（应为 0，B 这轮没发消息）`);
+    if (bText > 0) throw new Error('B 收到了不属于它的 text 事件');
+
+    const bLiveText = await win.webContents.executeJavaScript(
+      `(() => {
+         const el = document.querySelector('.bubble-ai.streaming');
+         return el ? el.innerText : '';
+       })()`,
+    );
+    note(`B 界面上正在流式的内容: ${JSON.stringify(String(bLiveText).slice(0, 60))}`);
+
+    const leaked = String(bLiveText).includes(marker);
+    note(`A 的内容串到 B 了吗: ${leaked}`);
+    if (leaked) throw new Error('后台会话的流式输出串到了当前会话界面上');
+
+    // 等 A 跑完
+    await waitFor(() => (turnDone.get(a) ?? 0) >= 1, 180_000, 'A 的轮结束');
+    note(`A 的轮结束，共 ${textBySession.get(a)} 段文本`);
+
+    // 切回 A，内容应该在
+    await runtime.listSessions();
+    const aRows = runtime.messageRows(a);
+    const aText = aRows
+      .map((r) => {
+        try {
+          const c = typeof r.content === 'string' ? JSON.parse(r.content) : r.content;
+          return typeof c?.text === 'string' ? c.text : '';
+        } catch {
+          return '';
+        }
+      })
+      .join(' ');
+    note(`A 落库的内容含标记: ${aText.includes(marker)}`);
+    if (!aText.includes(marker)) throw new Error('A 的回复没落库');
+
+    await fs.writeFile(
+      path.join(outDir, 'routing-result.json'),
+      JSON.stringify(
+        { ok: true, aTextSegments: textBySession.get(a), leaked, bLiveText: String(bLiveText).slice(0, 100), log },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-routing-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'routing-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
