@@ -59,6 +59,7 @@ import {
 import { parseModelCatalog } from './modelCatalog.js';
 import { createSavepoint, restoreSavepoint } from './gitSavepoint.js';
 import { saveImageAttachment, type SavedImage } from './imageAttachment.js';
+import { prepareWorkerWorktree, removeWorkerWorktree } from './workerWorktree.js';
 
 export interface HostConfig {
   upstreamRoot: string;
@@ -1650,22 +1651,159 @@ export class HostRuntime {
     if (!leadMeta) throw new Error(`lead 会话不存在: ${leadSessionId}`);
 
     const role = config.role || 'developer';
+    const label = config.label ?? null;
+
+    /* ---- 工作区隔离 ----
+     * 多个 worker 改同一个文件会静默覆盖（A 读 → B 写 → A 写，B 的改动没了）。
+     * 每个 worker 一个 git worktree，物理隔离。
+     *
+     * config.isolate === false 时跳过（用户明确要共享目录，比如只是想
+     * 让 worker 看看同一个仓库又不想建 worktree）。
+     * 非 git 仓库会自动降级，此时 isolated=false，UI 据此提示风险。
+     */
+    const baseDir = config.workingDir ?? leadMeta.workDir;
+    let workingDir = baseDir;
+    let isolationInfo: { isolated: boolean; reason?: string } = { isolated: false };
+    if (config.isolate !== false) {
+      const prepared = await prepareWorkerWorktree(baseDir, label ?? role);
+      workingDir = prepared.workingDir;
+      isolationInfo = { isolated: prepared.isolated, reason: prepared.reason };
+      if (!prepared.isolated) {
+        console.warn(`[orca] worker 工作区未隔离: ${prepared.reason}`);
+      }
+    }
+
     const sessionId = await this.createSession(
-      orcaWorkerSessionTitle(role, config.label ?? null),
+      orcaWorkerSessionTitle(role, label),
       config.model ?? leadMeta.model,
-      config.workingDir ?? leadMeta.workDir,
+      workingDir,
     );
+
+    /* ---- 默认全放行 ----
+     * worker 的价值是「不用一直盯着」，每步弹确认就失去意义。
+     *
+     * 敢默认 bypassPermissions 的前提是上面做了 worktree 隔离：
+     * 改坏也只坏自己那份，主目录不受影响。
+     * 未隔离时降回 auto —— 没有隔离还全放行，风险是叠加的。
+     */
+    const permissionMode: PermissionModeChoice = config.permissionMode
+      ?? (isolationInfo.isolated ? 'bypassPermissions' : 'auto');
+    try {
+      const session = await this.getSession(sessionId);
+      await session.setPermissionMode(permissionMode);
+    } catch (error) {
+      console.warn('[orca] 设置 worker 权限档位失败:', String(error));
+    }
 
     return this.orca.addWorker({
       teamId: team.id,
       sessionId,
       role,
-      label: config.label ?? null,
+      label,
+      workingDir,
+      isolated: isolationInfo.isolated,
+      isolationReason: isolationInfo.reason ?? null,
     });
   }
 
   listWorkers(leadSessionId: string): OrcaWorkerRecord[] {
     return this.orca.listWorkersByLead(leadSessionId);
+  }
+
+  /**
+   * 切换 worker 的工作区隔离 —— 用户随时可以改。
+   *
+   * 两种情况：
+   *   - 从共享 → 隔离：新建 worktree，会话的工作目录切过去
+   *   - 从隔离 → 共享：删掉 worktree 的记录，目录切回 Lead 的
+   *
+   * 注意：**不搬文件**。切过去之后 worker 看到的是新目录的内容，
+   * 之前那份的改动留在原来位置不动 —— 搬文件会把两边的改动混在一起，
+   * 那才是真正会丢数据的地方。
+   */
+  async setWorkerIsolation(workerId: string, isolated: boolean): Promise<OrcaWorkerRecord> {
+    const worker = this.orca.getWorker(workerId);
+    if (!worker) throw new Error(`worker 不存在: ${workerId}`);
+
+    const team = this.orca.getWorkerBySession(worker.sessionId);
+    if (!team) throw new Error('worker 缺少 team');
+
+    // Lead 的目录就是「共享目录」的定义
+    const leadRow = this.db
+      .prepare(
+        `SELECT t.lead_session_id AS leadId FROM orca_teams t WHERE t.id = ?`,
+      )
+      .get(team.teamId) as { leadId: string } | undefined;
+    const leadMeta = leadRow ? await this.storage.get(leadRow.leadId) : null;
+    if (!leadMeta) throw new Error('找不到 Lead 会话');
+
+    const label = worker.label ?? worker.role;
+    const prepared = isolated
+      ? await prepareWorkerWorktree(leadMeta.workDir, label)
+      : { workingDir: leadMeta.workDir, isolated: false, reason: 'user-shared' as string | undefined };
+
+    this.db
+      .prepare(
+        `UPDATE orca_workers
+            SET working_dir = ?, isolated = ?, isolation_reason = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .run(
+        prepared.workingDir,
+        prepared.isolated ? 1 : 0,
+        prepared.reason ?? null,
+        Date.now(),
+        workerId,
+      );
+
+    // 会话自己的 working_dir 也要跟着改，否则引擎还在旧目录里跑
+    this.db
+      .prepare('UPDATE sessions SET working_dir = ? WHERE id = ?')
+      .run(prepared.workingDir, worker.sessionId);
+
+    // 引擎侧的 session 是长驻对象，得重新应用目录才真的生效
+    try {
+      const session = await this.getSession(worker.sessionId);
+      await session.setWritableDirs([prepared.workingDir]);
+      await session.setExtraDirs([prepared.workingDir]);
+    } catch (error) {
+      console.warn('[orca] 切换隔离后重应用目录失败:', String(error));
+    }
+
+    const updated = this.orca.getWorker(workerId);
+    if (!updated) throw new Error('切换后读不到 worker');
+    return updated;
+  }
+
+  /** worker 用的工作目录（UI 显示「在哪干活」） */
+  workerWorkingDir(workerId: string): string | null {
+    const row = this.db
+      .prepare('SELECT working_dir FROM orca_workers WHERE id = ?')
+      .get(workerId) as { working_dir: string | null } | undefined;
+    return row?.working_dir ?? null;
+  }
+
+  /** 验收用：读会话的 workingDir / model，测试要据此准备 git 仓库 */
+  async debugSessionMeta(sessionId: string): Promise<{ workDir: string; model: string }> {
+    const meta = await this.storage.get(sessionId);
+    if (!meta) throw new Error(`会话不存在: ${sessionId}`);
+    return { workDir: meta.workDir, model: meta.model };
+  }
+
+  /** 验收用：读会话当前的权限档位（引擎侧生效值，不是数据库缓存） */
+  debugPermissionMode(sessionId: string): string {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      try {
+        return (session as unknown as { permissionModeState: { mode: string } }).permissionModeState.mode;
+      } catch {
+        /* 引擎没暴露就用库里的值兜底 */
+      }
+    }
+    const row = this.db
+      .prepare('SELECT permission_mode FROM sessions WHERE id = ?')
+      .get(sessionId) as { permission_mode?: string } | undefined;
+    return row?.permission_mode ?? 'unknown';
   }
 
   /** 验收用：拿 lead 的 active team id（验证幂等） */

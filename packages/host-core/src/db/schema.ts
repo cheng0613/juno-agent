@@ -281,4 +281,17 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_sessions_orca_role ON sessions(orca_role);
     `,
   },
+  {
+    version: 8,
+    name: 'orca-worker-worktree',
+    // worker 的工作区隔离状态要落库：
+    //   working_dir：worker 实际在哪干活（worktree 路径或共享的主目录）
+    //   isolated：是否真的隔离。false 表示共享目录、有并发覆盖风险，
+    //             UI 要据此提示用户，不能让它静默
+    sql: `
+      ALTER TABLE orca_workers ADD COLUMN working_dir TEXT;
+      ALTER TABLE orca_workers ADD COLUMN isolated INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE orca_workers ADD COLUMN isolation_reason TEXT;
+    `,
+  },
 ];

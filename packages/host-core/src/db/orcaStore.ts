@@ -37,6 +37,9 @@ interface WorkerRow {
   idle_since: number | null;
   created_at: number;
   updated_at: number;
+  working_dir: string | null;
+  isolated: number;
+  isolation_reason: string | null;
 }
 
 function toTeam(row: TeamRow): OrcaTeamRecord {
@@ -61,6 +64,8 @@ function toWorker(row: WorkerRow): OrcaWorkerRecord {
     idleSince: row.idle_since,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    isolated: row.isolated === 1,
+    ...(row.isolation_reason ? { isolationReason: row.isolation_reason } : {}),
   };
 }
 
@@ -124,6 +129,10 @@ export class OrcaStore {
     sessionId: string;
     role: string;
     label?: string | null;
+    /** worker 实际工作目录（worktree 路径或共享目录） */
+    workingDir?: string | null;
+    isolated?: boolean;
+    isolationReason?: string | null;
   }): OrcaWorkerRecord {
     const role = normalizeOrcaRole(input.role);
     const explicit = normalizeOrcaLabel(input.label);
@@ -134,10 +143,22 @@ export class OrcaStore {
     this.db
       .prepare(
         `INSERT INTO orca_workers
-           (id, team_id, session_id, role, label, status, focused, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'idle', 0, ?, ?)`,
+           (id, team_id, session_id, role, label, status, focused,
+            working_dir, isolated, isolation_reason, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'idle', 0, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.teamId, input.sessionId, role, label, now, now);
+      .run(
+        id,
+        input.teamId,
+        input.sessionId,
+        role,
+        label,
+        input.workingDir ?? null,
+        input.isolated ? 1 : 0,
+        input.isolationReason ?? null,
+        now,
+        now,
+      );
 
     // 给 worker 会话打标记：侧栏据此把它从主列表里过滤掉
     this.db

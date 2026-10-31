@@ -17,6 +17,8 @@ import type { HostRuntime } from './hostRuntime.js';
 import type { HostEvent } from '../src/shared/ipc.js';
 
 const execAsync = promisify(execFile);
+/** ORCA 验收用：跟 git 打交道的小包装 */
+const runGit = execAsync;
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -3573,6 +3575,139 @@ export async function runOrcaDataTest(win: BrowserWindow, runtime: HostRuntime):
     await fs
       .writeFile(
         path.join(outDir, 'orca-data-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}
+
+/**
+ * ORCA 阶段一补验收：工作区隔离 + 权限档位。
+ *
+ * 验的是「并发写同一文件不会互相覆盖」这个承诺的基础：
+ *   1. 每个 worker 拿到独立的 worktree 目录
+ *   2. 两个 worker 的目录确实不同（物理隔离）
+ *   3. 隔离成功时权限默认 bypassPermissions
+ *   4. 非 git 目录降级为共享，且权限降回 auto
+ *   5. 隔离状态可以随时切换
+ */
+export async function runOrcaIsolationTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/orca-iso] ${s}`);
+  };
+  const check = (cond: boolean, msg: string) => {
+    if (!cond) throw new Error(msg);
+  };
+
+  try {
+    await delay(2200);
+    const leadId = await runtime.ensureSession();
+    note(`lead: ${leadId.slice(0, 8)}`);
+
+    /* ---- 前置：把 lead 的工作目录变成 git 仓库 ---- */
+    const leadMeta = await runtime.debugSessionMeta(leadId);
+    const repo = leadMeta.workDir;
+    note(`工作目录: ${repo}`);
+
+    // 一个文件 + 一次提交，否则 worktree add 没有 HEAD 可用
+    await fs.mkdir(repo, { recursive: true });
+    await runGit('git', ['init', '-q'], { cwd: repo }).catch(() => undefined);
+    await fs.writeFile(path.join(repo, 'README.md'), '# demo\n', 'utf8');
+    await runGit('git', ['add', '-A'], { cwd: repo });
+    await runGit(
+      'git',
+      ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'],
+      { cwd: repo },
+    ).catch(() => undefined);
+    note('仓库已就绪');
+
+    /* ---- 1. 两个 worker 应拿到不同目录 ---- */
+    const w1 = await runtime.createWorker(leadId, { role: 'developer' });
+    const w2 = await runtime.createWorker(leadId, { role: 'reviewer' });
+    const dir1 = runtime.workerWorkingDir(w1.id);
+    const dir2 = runtime.workerWorkingDir(w2.id);
+    note(`w1 目录: ${dir1}`);
+    note(`w2 目录: ${dir2}`);
+
+    check(dir1 !== null && dir2 !== null, 'worker 工作目录没落库');
+    check(dir1 !== dir2, `两个 worker 共用目录 ${dir1}，没有隔离`);
+    check(dir1 !== repo, 'worker 目录和 lead 相同，没有隔离');
+    check(w1.isolated === true, 'w1 应标记为已隔离');
+    note('物理隔离成立');
+
+    /* ---- 2. 目录真的能独立写 ---- */
+    await fs.writeFile(path.join(dir1!, 'only-1.txt'), 'a', 'utf8');
+    const leaked = await fs
+      .access(path.join(dir2!, 'only-1.txt'))
+      .then(() => true)
+      .catch(() => false);
+    note(`w1 写的文件是否漏到 w2: ${leaked}`);
+    check(!leaked, 'w1 写的文件出现在了 w2 目录 —— 隔离没生效');
+
+    // 用户主目录也不该看到
+    const inRepo = await fs
+      .access(path.join(repo, 'only-1.txt'))
+      .then(() => true)
+      .catch(() => false);
+    note(`w1 写的文件是否漏到主目录: ${inRepo}`);
+    check(!inRepo, 'worker 的改动漏到了主目录');
+
+    /* ---- 3. 隔离时权限默认 bypassPermissions ---- */
+    const mode1 = runtime.debugPermissionMode(w1.sessionId);
+    note(`w1 权限档位: ${mode1}`);
+    check(mode1 === 'bypassPermissions', `隔离时默认应为 bypassPermissions，实际 ${mode1}`);
+
+    /* ---- 4. 切换隔离 ---- */
+    const back = await runtime.setWorkerIsolation(w1.id, false);
+    note(`切回共享后 isolated=${back.isolated}`);
+    check(back.isolated === false, '切换到共享失败');
+    const sharedDir = runtime.workerWorkingDir(w1.id);
+    note(`切回共享后目录: ${sharedDir}`);
+    check(sharedDir === repo, `切回共享后应等于 lead 目录，实际 ${sharedDir}`);
+
+    const again = await runtime.setWorkerIsolation(w1.id, true);
+    note(`再切回隔离后 isolated=${again.isolated}, 目录=${runtime.workerWorkingDir(w1.id)}`);
+    check(again.isolated === true, '再切回隔离失败');
+
+    /* ---- 5. 非 git 目录降级 ---- */
+    const plainDir = path.join(outDir, 'plain-dir');
+    await fs.mkdir(plainDir, { recursive: true });
+    const w3 = await runtime.createWorker(leadId, { role: 'tester', workingDir: plainDir });
+    note(`非 git 目录: isolated=${w3.isolated}, reason=${w3.isolationReason}`);
+    check(w3.isolated === false, '非 git 目录不该标记为已隔离');
+    check(
+      w3.isolationReason === 'not-a-git-repo',
+      `降级原因应为 not-a-git-repo，实际 ${w3.isolationReason}`,
+    );
+    const mode3 = runtime.debugPermissionMode(w3.sessionId);
+    note(`非 git 目录的权限档位: ${mode3}`);
+    check(mode3 === 'auto', `未隔离时权限应降回 auto，实际 ${mode3}`);
+
+    /* ---- 6. 权限档位仍可手动改 ---- */
+    await runtime.setPermissionMode(w3.sessionId, 'bypassPermissions');
+    const forced = runtime.debugPermissionMode(w3.sessionId);
+    note(`手动改成 bypassPermissions: ${forced}`);
+    check(forced === 'bypassPermissions', '手动改权限档位没生效');
+
+    await fs.writeFile(
+      path.join(outDir, 'orca-iso-result.json'),
+      JSON.stringify({ ok: true, log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await fs
+      .writeFile(
+        path.join(outDir, 'orca-iso-result.json'),
         JSON.stringify({ ok: false, error: String(error), log }, null, 2),
         'utf8',
       )

@@ -49,6 +49,19 @@ export interface OrcaWorkerConfig {
   model?: string;
   /** 工作目录；不传就继承 lead */
   workingDir?: string;
+  /**
+   * 是否给这个 worker 单独开 git worktree。
+   *
+   * 默认 true。关掉意味着多个 worker 共享同一目录 —— 会静默互相覆盖。
+   * 只在你确认「这些 worker 不会碰同一个文件」时才关。
+   */
+  isolate?: boolean;
+  /**
+   * 权限档位。不传时：隔离了就用 bypassPermissions，没隔离就用 auto。
+   *
+   * 建完还能随时切（runtime.setPermissionMode），这里只是初始值。
+   */
+  permissionMode?: 'ask' | 'auto' | 'bypassPermissions';
 }
 
 export interface OrcaTeamRecord {
@@ -70,6 +83,10 @@ export interface OrcaWorkerRecord {
   idleSince: number | null;
   createdAt: number;
   updatedAt: number;
+  /** 是否有独立工作区（git worktree）。false 表示和 Lead 共享目录 */
+  isolated?: boolean;
+  /** 没隔离的原因，用于向用户解释 */
+  isolationReason?: string;
 }
 
 /** worker 在 UI 上显示什么名字：`role · label`，没 label 就只显示 role */
