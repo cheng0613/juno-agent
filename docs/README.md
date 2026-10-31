@@ -36,6 +36,7 @@
 - [Phase 26](./PHASE26-REPORT.md) — 后台完成通知
 - [Phase 27](./PHASE27-REPORT.md) — 跨会话事件路由
 - [Phase 28](./PHASE28-REPORT.md) — 实时流式可见
+- [Phase 29](./PHASE29-REPORT.md) — 改名为 Juno
 
 ### 外壳
 - [Phase 3](./PHASE3-REPORT.md) — Electron + IPC + 对话 UI

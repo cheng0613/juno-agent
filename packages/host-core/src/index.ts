@@ -1,5 +1,5 @@
 /**
- * @spike/host-core —— 宿主运行时
+ * @juno/host-core —— 宿主运行时
  *
  * 把「把 maker-core 跑起来」这件事从具体入口里剥离出来，
  * 让 CLI（apps/spike）和桌面端（apps/desktop）共用同一套：

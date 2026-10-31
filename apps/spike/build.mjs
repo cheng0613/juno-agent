@@ -37,6 +37,7 @@ await build({
     probeTree: 'src/probeTree.ts',
     probeImage: 'src/probeImage.ts',
     benchParallel: 'src/benchParallel.ts',
+    spikeMcp: 'src/spikeMcp.ts',
   },
   bundle: true,
   platform: 'node',

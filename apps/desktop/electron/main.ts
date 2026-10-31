@@ -13,6 +13,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
 import { readSettings, writeSettings, hasStoredKey, encryptionAvailable, settingsFilePath } from './settingsStore.js';
 import { loadWindowState, saveWindowState } from './windowState.js';
+import { migrateLegacyUserData } from './migrateUserData.js';
 import { notifyTurnFinished } from './notifications.js';
 import {
   IPC,
@@ -451,6 +452,10 @@ app.whenReady().then(async () => {
     );
     process.env.APP_DATA_DIR ??= app.getPath('userData');
   }
+
+  // 改名后 userData 目录变了（Spike Agent → Juno）。
+  // 必须在读设置之前搬，否则会读到一个空目录，用户看起来像被重置了。
+  if (app.isPackaged) await migrateLegacyUserData();
 
   // 读本地设置。key 存在这里时注入 process.env，
   // 因为底层 auth adapter 只认环境变量 —— 与其改整条链路，不如在入口对齐。

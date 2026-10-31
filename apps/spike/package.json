@@ -1,5 +1,5 @@
 {
-  "name": "@spike/app",
+  "name": "@juno/app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,16 +18,18 @@
     "@cindy/maker-shared": "workspace:*",
     "@cindy/model-compat": "workspace:*",
     "@cindy/model-providers": "workspace:*",
-    "@spike/host-core": "workspace:*",
+    "@juno/host-core": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "diff": "^8.0.4",
     "gray-matter": "^4.0.3",
     "parse5": "8.0.1"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "zod": "^4.6.7"
   }
 }

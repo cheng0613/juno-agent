@@ -1,5 +1,5 @@
 {
-  "name": "@spike/host-core",
+  "name": "@juno/host-core",
   "version": "0.0.0",
   "private": true,
   "type": "module",

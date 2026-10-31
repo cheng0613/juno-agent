@@ -853,7 +853,7 @@ export function App() {
       {/* ---------------- 侧边栏 ---------------- */}
       <aside className="sidebar">
         <div className="sidebar-head">
-          <span className="brand">Agent</span>
+          <span className="brand">Juno</span>
           {isMock && <span className="badge">预览模式</span>}
         </div>
 

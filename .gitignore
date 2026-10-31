@@ -6,6 +6,7 @@
 .packaged-test/
 .tmp/
 .bench/
+.mcp-spike/
 release/
 apps/desktop/.appdata/
 apps/desktop/.autotest/

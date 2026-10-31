@@ -30,7 +30,7 @@ import {
   openDatabase,
   resolvePiBinary,
   type Db,
-} from '@spike/host-core';
+} from '@juno/host-core';
 
 import type {
   ApprovalRequest,

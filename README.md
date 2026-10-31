@@ -1,4 +1,4 @@
-# spike-host
+# Juno
 
 验证工程：只 vendor `@cindy/maker-core`，自己写宿主，这条路走不走得通。
 
@@ -34,6 +34,7 @@
 | Phase 26 | 后台完成通知（B 类） | [报告](./docs/PHASE26-REPORT.md) |
 | Phase 27 | 跨会话事件路由（B 类） | [报告](./docs/PHASE27-REPORT.md) |
 | Phase 28 | 实时流式可见（B 类） | [报告](./docs/PHASE28-REPORT.md) |
+| Phase 29 | 改名为 Juno | [报告](./docs/PHASE29-REPORT.md) |
 
 报告索引与踩坑汇总见 [docs/README.md](./docs/README.md)。
 
@@ -42,7 +43,7 @@
 ## 结构
 
 ```
-spike-host/
+juno/
 ├── design/                    ← design tokens
 │   ├── tokens.css             唯一来源，93 个变量
 │   ├── preview.html           自包含预览（双主题）
@@ -165,7 +166,7 @@ node dist/selftest.js        # 6/6
 | `APP_EFFORTS` | 空 = 不支持思考档位 | 逗号分隔的档位，如 `minimal,low,medium,high,xhigh,max`；**配置后才在 UI 显示** |
 | `APP_MODELS` | 空 = 只有一个模型 | JSON 数组，配两个以上才出现模型切换下拉。例：`[{"id":"m1","label":"模型一"},{"id":"m2","label":"模型二"}]` |
 | `APP_EXPORT_DIR` | `%USERPROFILE%/Documents/Agent 导出` | 导出 HTML 的落地目录 |
-| `APP_DATA_DIR` | `%TEMP%/spike-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Spike Agent`） |
+| `APP_DATA_DIR` | `%TEMP%/juno-desktop` | 数据库与工作目录（打包版默认 `%APPDATA%/Juno`） |
 | `APP_PI_BINARY` | 自动解析 | pi 可执行文件绝对路径 |
 | `APP_AUTOTEST` | 关 | `1` = 自动跑一轮对话；`resume` = 验中断续跑；`permission` = 验权限记忆；`queue` = 验输入队列；`compact` = 验上下文压缩；`steer` = 验插话与占用；`diff` = 验改动面板；`mode` = 验权限档位与计划模式；`model` = 验模型热切换；`export` = 验导出 HTML；`task` = 验子任务进度；`dirs` = 验额外工作目录；`tree` = 验会话分支树；`image` = 验图片输入；`rewind` = 验文件回滚；`status` = 验状态行；`settings` = 验配置持久化；`restart` = 验保存即重启；`error` = 验错误边界；`watchdog` = 验卡住提示；`window` = 验窗口记忆；`session` = 验会话管理；`parallel` = 验多会话并行；`notify` = 验完成通知；`routing` = 验事件路由；`live` = 验实时流式可见 |
 
@@ -182,7 +183,7 @@ node dist/selftest.js        # 6/6
 | `SPIKE_CONTEXT_WINDOW` | `200000` | 上下文窗口 |
 | `SPIKE_EFFORTS` | 空 | 逗号分隔；空 = 不支持 effort |
 | `SPIKE_APPROVAL` | `allow` | `allow` / `deny` / `ask` |
-| `SPIKE_DATA_DIR` | `%TEMP%/spike-host` | 数据根目录 |
+| `SPIKE_DATA_DIR` | `%TEMP%/juno-cli` | 数据根目录 |
 | `SPIKE_UPSTREAM_ROOT` | `C:/Users/chiaki/Desktop/agent/upstream/cindy` | 找 pi 二进制 |
 | `SPIKE_TIMEOUT_MS` | `180000` | 单轮超时 |
 

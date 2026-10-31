@@ -29,7 +29,7 @@ import {
   openDatabase,
   resolvePiBinary,
   SqliteSessionStorage,
-} from '@spike/host-core';
+} from '@juno/host-core';
 
 const exec = promisify(execFile);
 const logger = createConsoleLogger('bench');

@@ -86,7 +86,7 @@ fs.writeFileSync(
   JSON.stringify(
     {
       name: 'spike-agent',
-      productName: 'Spike Agent',
+      productName: 'Juno',
       version: '0.1.0',
       description: '本地 AI agent 桌面端（验证工程）',
       main: 'dist-electron/main.js',
@@ -115,7 +115,7 @@ await build({
     electronVersion: ELECTRON_VERSION,
     electronDist: fs.existsSync(LOCAL_ELECTRON_DIST) ? LOCAL_ELECTRON_DIST : undefined,
     appId: 'app.spike.agent',
-    productName: 'Spike Agent',
+    productName: 'Juno',
     directories: { output: outDir },
     // pi-bin 已由 extraResources 单独投放，必须从 asar 里排除，
     // 否则 pi.exe（106MB）会被打进去两次，包体积直接翻倍
@@ -140,10 +140,10 @@ await build({
 
 const unpacked = path.join(outDir, 'win-unpacked');
 if (fs.existsSync(unpacked)) {
-  console.log(`\n✓ 免安装版: ${path.join(unpacked, 'Spike Agent.exe')}`);
+  console.log(`\n✓ 免安装版: ${path.join(unpacked, 'Juno.exe')}`);
   console.log('  直接运行它就能验证打包结果（APP_AUTOTEST=1 可自动跑一轮）');
 }
-const installer = path.join(outDir, 'Spike Agent Setup 0.1.0.exe');
+const installer = path.join(outDir, 'Juno Setup 0.1.0.exe');
 if (fs.existsSync(installer)) {
   console.log(`✓ 安装包: ${installer}`);
 }

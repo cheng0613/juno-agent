@@ -12,10 +12,10 @@
  */
 import assert from 'node:assert/strict';
 
-import { openDatabase } from '@spike/host-core';
-import { SqliteSessionStorage } from '@spike/host-core';
-import { MessageStore } from '@spike/host-core';
-import { TurnStore } from '@spike/host-core';
+import { openDatabase } from '@juno/host-core';
+import { SqliteSessionStorage } from '@juno/host-core';
+import { MessageStore } from '@juno/host-core';
+import { TurnStore } from '@juno/host-core';
 
 const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
 

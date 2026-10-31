@@ -18,7 +18,7 @@ import {
   openDatabase,
   resolvePiBinary,
   SqliteSessionStorage,
-} from '@spike/host-core';
+} from '@juno/host-core';
 
 const logger = createConsoleLogger('probe-tree');
 const UPSTREAM_ROOT = process.env.SPIKE_UPSTREAM_ROOT ?? 'C:/Users/chiaki/Desktop/agent/upstream/cindy';

@@ -27,13 +27,13 @@ import {
   assertPiBinaryExists,
   createPiAgent,
   resolvePiBinary,
-} from '@spike/host-core';
-import { openDatabase } from '@spike/host-core';
-import { SqliteSessionStorage } from '@spike/host-core';
-import { MessageStore } from '@spike/host-core';
-import { TurnStore } from '@spike/host-core';
-import { SessionRecorder } from '@spike/host-core';
-import { createConsoleApproval, type ApprovalMode } from '@spike/host-core';
+} from '@juno/host-core';
+import { openDatabase } from '@juno/host-core';
+import { SqliteSessionStorage } from '@juno/host-core';
+import { MessageStore } from '@juno/host-core';
+import { TurnStore } from '@juno/host-core';
+import { SessionRecorder } from '@juno/host-core';
+import { createConsoleApproval, type ApprovalMode } from '@juno/host-core';
 
 const logger = createConsoleLogger('spike');
 

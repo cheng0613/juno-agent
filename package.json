@@ -1,11 +1,11 @@
 {
-  "name": "spike-host",
+  "name": "juno",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "pnpm -r typecheck",
-    "spike": "pnpm --filter @spike/app start"
+    "cli": "pnpm --filter @juno/app start"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

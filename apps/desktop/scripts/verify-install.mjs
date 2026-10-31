@@ -22,11 +22,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 const CANDIDATES = [
-  path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Spike Agent', 'Spike Agent.exe'),
-  path.join(process.env.PROGRAMFILES ?? '', 'Spike Agent', 'Spike Agent.exe'),
-  path.join(process.env['PROGRAMFILES(X86)'] ?? '', 'Spike Agent', 'Spike Agent.exe'),
+  path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Juno', 'Juno.exe'),
+  path.join(process.env.PROGRAMFILES ?? '', 'Juno', 'Juno.exe'),
+  path.join(process.env['PROGRAMFILES(X86)'] ?? '', 'Juno', 'Juno.exe'),
   // 免安装版
-  path.join(process.cwd(), 'win-unpacked', 'Spike Agent.exe'),
+  path.join(process.cwd(), 'win-unpacked', 'Juno.exe'),
 ];
 
 const results = [];
@@ -79,7 +79,7 @@ function checkEnv() {
 }
 
 async function checkLaunch(exePath) {
-  const userData = path.join(process.env.APPDATA ?? os.homedir(), 'Spike Agent');
+  const userData = path.join(process.env.APPDATA ?? os.homedir(), 'Juno');
   const child = spawn(exePath, [], {
     stdio: 'pipe',
     windowsHide: false,
