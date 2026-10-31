@@ -2960,3 +2960,115 @@ export async function runSessionOrgTest(win: BrowserWindow, runtime: HostRuntime
     app.quit();
   }
 }
+
+/**
+ * 多会话并行验收。
+ *
+ * 核心要验的是：**切走不会打断后台那一轮**。
+ * 之前的实现里 this.session 是单实例，切会话就把旧会话连同它的订阅一起换掉，
+ * 后台轮静默消失、不报错，用户以为在跑其实早没了。
+ *
+ * 这里让会话 A 跑一个长命令，然后切到 B 发消息，
+ * 最后回到 A 看它是否还在跑/跑完了。
+ */
+export async function runParallelTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/parallel] ${s}`);
+  };
+
+  /** 每条 turn 事件按 turnId 记录最终状态 */
+  const turnStates = new Map<string, string>();
+  const startedTurns: string[] = [];
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'turn') {
+      if (e.state === 'running') startedTurns.push(e.turnId);
+      else turnStates.set(e.turnId, e.state);
+    }
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(250);
+    }
+  };
+
+  try {
+    await delay(2500);
+
+    // 建第二个会话。走 IPC 而不是点按钮：按钮会触发 React 状态更新，
+    // 但 bootstrap 返回的列表是快照，时序上不一定已经包含新会话。
+    await win.webContents.executeJavaScript(`window.host.createSession().then(() => 'ok')`);
+    await delay(900);
+    const sessions = await runtime.listSessions();
+    if (sessions.length < 2) throw new Error(`需要至少两个会话，实际 ${sessions.length}`);
+    const a = sessions[1]!.id;
+    const b = sessions[0]!.id;
+    note(`会话 A=${a.slice(0, 8)} / B=${b.slice(0, 8)}`);
+
+    // 在 A 里发一个长任务
+    await runtime.send(a, '用 bash 跑 sleep 10，然后一句话回答');
+    await waitFor(() => startedTurns.length >= 1, 30_000, 'A 的轮开始');
+    const aTurn = startedTurns[0]!;
+    note(`A 的轮已开始: ${aTurn.slice(0, 8)}`);
+
+    // 切到 B 并发一条消息（这是旧实现会打断 A 的地方）
+    await win.webContents.executeJavaScript(
+      `window.host.loadSession(${JSON.stringify(b)}).then(() => 'ok')`,
+    );
+    note('已切换到 B');
+    await delay(500);
+    await runtime.send(b, '只回答两个字：你好');
+    note('已在 B 发消息');
+    await delay(1500);
+
+    const aStillRunning = !turnStates.has(aTurn);
+    note(`切换后 A 的轮仍在跑: ${aStillRunning}`);
+
+    // 等两轮都收口
+    await waitFor(
+      () => turnStates.size >= 2,
+      240_000,
+      'A 和 B 的轮都结束',
+    );
+    note(`轮状态: ${JSON.stringify([...turnStates.entries()].map(([k, v]) => [k.slice(0, 8), v]))}`);
+
+    const aState = turnStates.get(aTurn);
+    note(`A 的轮最终状态: ${aState}`);
+    if (aState !== 'done') throw new Error(`A 的轮没有正常完成，状态=${aState}`);
+
+    // localStorage 层：A 的消息应该落库了（证明它真的跑完了）
+    const aRows = runtime.messageRows(a);
+    note(`A 的消息数: ${aRows.length}`);
+    if (aRows.length < 2) throw new Error(`A 只有 ${aRows.length} 条消息，可能没跑完`);
+
+    await shootTo(win, '48-parallel');
+    note('截图 48-parallel');
+
+    await fs.writeFile(
+      path.join(outDir, 'parallel-result.json'),
+      JSON.stringify({ ok: true, aState, aRows: aRows.length, turnStates: [...turnStates.keys()], log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-parallel-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'parallel-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

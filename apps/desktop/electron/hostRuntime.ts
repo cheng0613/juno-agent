@@ -300,6 +300,8 @@ interface PendingApproval {
   /** 记住规则时要用到的上下文 */
   toolName: string;
   subject: string | null;
+  /** 哪个会话发起的：多会话并行下不能靠「当前会话」猜 */
+  sessionId: string | null;
 }
 
 export class HostRuntime {
@@ -310,10 +312,26 @@ export class HostRuntime {
   private permissions!: PermissionStore;
   private recorder!: SessionRecorder;
   private maker!: Maker;
-  private session: Session | null = null;
+  /**
+   * 所有活着的会话。
+   *
+   * 之前只有一个 this.session，切会话就得关掉旧的、重建新的 ——
+   * 后果是「让它跑 A，我去看 B」会把 A 打断。
+   * 现在按 sessionId 常驻，切会话只是切 UI，后台那轮照跑。
+   */
+  private readonly sessions = new Map<string, Session>();
   private readonly pending = new Map<string, PendingApproval>();
   private listeners = new Set<(event: HostEvent) => void>();
-  private activeTurnId: string | null = null;
+  /**
+   * 每个会话当前在跑的那一轮。
+   *
+   * 之前是全局单值 activeTurnId —— 那隐含「同时只能有一轮」，
+   * 多会话并行就是要拆掉这个假设。
+   */
+  private readonly activeTurns = new Map<string, string>();
+
+  /** 兼容旧代码：最近一次操作的会话 id，用于 steer/cancel 这类没带 sessionId 的路径 */
+  private activeTurnSessionId: string | null = null;
   /**
    * 每一轮各自一份订阅，按 turnId 归档。
    *
@@ -565,7 +583,9 @@ export class HostRuntime {
   }
 
   async ensureSession(): Promise<string> {
-    if (this.session) return this.session.id;
+    // 已经有活着的会话就直接复用（启动时 bootstrap 会调到这里）
+    const alive = this.sessions.values().next();
+    if (!alive.done) return alive.value.id;
     const existing = await this.storage.list();
     if (existing.length > 0) {
       return await this.resume(existing[0]!.id);
@@ -573,7 +593,28 @@ export class HostRuntime {
     return await this.createSession();
   }
 
+  /**
+   * 取会话实例，没有就建。
+   *
+   * 取代原来「this.session 不是它 → resume」那套写法：
+   * 那个写法的隐含语义是「同一时刻只能有一个会话」，
+   * 而这正是多会话并行要拆掉的东西。
+   */
+  private async getSession(sessionId: string): Promise<Session> {
+    const existing = this.sessions.get(sessionId);
+    if (existing) return existing;
+    await this.resume(sessionId);
+    const created = this.sessions.get(sessionId);
+    if (!created) throw new Error(`会话创建失败: ${sessionId}`);
+    return created;
+  }
+
   async resume(sessionId: string): Promise<string> {
+    // 已经活着的会话直接复用。
+    // 这里无条件重建的话，切走再切回会把正在跑的那一轮连同它的订阅一起换掉 ——
+    // 后台任务静默消失，而且不会有任何报错。
+    if (this.sessions.has(sessionId)) return sessionId;
+
     const meta = await this.storage.get(sessionId);
     if (!meta) throw new Error(`session not found: ${sessionId}`);
     const session = await this.maker.createSession({
@@ -628,8 +669,8 @@ export class HostRuntime {
     sessionId: string,
     dirs: { read: string[]; write: string[] },
   ): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    const session = this.session!;
+    const session0 = await this.getSession(sessionId);
+    const session = session0;
 
     const read = normalizeDirs(dirs.read);
     const write = normalizeDirs(dirs.write);
@@ -645,7 +686,7 @@ export class HostRuntime {
   }
 
   private attach(session: Session): void {
-    this.session = session;
+    this.sessions.set(session.id, session);
     session.setInteractionListener(async (req) => {
       if (this.cfg.approval === 'allow') {
         return req.kind === 'permission'
@@ -695,6 +736,7 @@ export class HostRuntime {
         resolve: resolve as (d: unknown) => void,
         toolName,
         subject,
+        sessionId: this.activeTurnSessionId,
       });
     });
 
@@ -720,7 +762,7 @@ export class HostRuntime {
         behavior,
         scope: remember,
         sessionId:
-          remember === 'session' ? (this.session?.id ?? null) : null,
+          remember === 'session' ? entry.sessionId : null,
       });
     }
 
@@ -741,9 +783,9 @@ export class HostRuntime {
     text: string,
     opts?: { reuseClientId?: string; images?: string[] },
   ): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session0 = await this.getSession(sessionId);
 
-    const session = this.session!;
+    const session = session0;
 
     // 图片先落盘再开轮：落盘失败时不应该已经开了一个空轮
     const savedImages: SavedImage[] = [];
@@ -778,8 +820,9 @@ export class HostRuntime {
     // 上一轮还没收口就来了新 send：旧订阅要先拆掉，否则它会继续吃新一轮的事件，
     // 把新事件写到旧 turnId 名下。同时如实把旧轮收成 interrupted，
     // 免得库里留一条永远 running 的行、下次启动误报「未完成」。
-    if (this.activeTurnId) {
-      const stale = this.activeTurnId;
+    const staleTurnId = this.activeTurns.get(sessionId);
+    if (staleTurnId) {
+      const stale = staleTurnId;
       this.turnUnsubs.get(stale)?.();
       this.turnUnsubs.delete(stale);
       this.recorder.finish(stale, 'interrupted');
@@ -787,7 +830,8 @@ export class HostRuntime {
       logger.warn('send 被新消息顶掉，上一轮已标为 interrupted', { stale });
     }
 
-    this.activeTurnId = turn.turnId;
+    this.activeTurns.set(sessionId, turn.turnId);
+    this.activeTurnSessionId = sessionId;
     this.emit({ type: 'turn', turnId: turn.turnId, state: 'running' });
 
     // 同一轮可能收到多个终态事件（引擎的 done 与会话收口事件），
@@ -810,7 +854,7 @@ export class HostRuntime {
         this.lastUsageTokens.delete(turn.turnId);
         this.lastEventAt.delete(turn.turnId);
         this.runningTools.delete(turn.turnId);
-        this.activeTurnId = null;
+        this.activeTurns.delete(sessionId);
         unsubscribe();
         this.turnUnsubs.delete(turn.turnId);
         // 先把轮收口通知发出去（UI 立刻不再转圈），再静悄悄算 diff
@@ -999,10 +1043,10 @@ export class HostRuntime {
    * 那样会漏掉事件，UI 就不会出现分隔线。
    */
   async compact(sessionId: string): Promise<CompactResult> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    if (this.activeTurnId) throw new Error('这一轮还在跑，等它结束再压缩');
+    const session0 = await this.getSession(sessionId);
+    if (this.activeTurns.get(sessionId)) throw new Error('这一轮还在跑，等它结束再压缩');
 
-    const session = this.session!;
+    const session = session0;
     let boundarySeen = false;
     let unsub: () => void = () => {};
     const stop = () => {
@@ -1052,11 +1096,12 @@ export class HostRuntime {
    * 模型看到后调整方向而不重做。队列是「等它跑完」，steer 是「现在就改」。
    */
   async steer(sessionId: string, text: string): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    const session = this.session!;
+    const session0 = await this.getSession(sessionId);
+    const session = session0;
 
     // 先把「不能插话」的情况翻译成人话，否则渲染层只能看到 SESSION_RUNNING 这类黑话
-    if (!this.activeTurnId) {
+    const turnId = this.activeTurns.get(sessionId);
+    if (!turnId) {
       throw new Error('当前没有正在进行的轮，直接发送即可');
     }
 
@@ -1072,8 +1117,8 @@ export class HostRuntime {
     }
 
     // 插话也要进对话历史，否则用户看到自己说的话凭空消失
-    this.recorder.appendSteer(sessionId, this.activeTurnId, text);
-    this.emit({ type: 'steer', turnId: this.activeTurnId, text });
+    this.recorder.appendSteer(sessionId, turnId, text);
+    this.emit({ type: 'steer', turnId, text });
   }
 
   /**
@@ -1089,8 +1134,8 @@ export class HostRuntime {
    * 用户跑到一半发现「这个应该全放行」很正常，没必要逼他先停下来。
    */
   async setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    await this.session!.setPermissionMode(mode);
+    const session0 = await this.getSession(sessionId);
+    await session0.setPermissionMode(mode);
     this.modes.permissionMode = mode;
     this.emitModes();
   }
@@ -1120,8 +1165,8 @@ export class HostRuntime {
    * 因为 preview 只是预检，不是前置条件。
    */
   async switchModel(sessionId: string, modelId: string): Promise<{ rebuilt: boolean }> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    const session = this.session!;
+    const session0 = await this.getSession(sessionId);
+    const session = session0;
 
     if (!this.catalog.entries.some((m) => m.id === modelId)) {
       throw new Error(`未知模型：${modelId}`);
@@ -1158,7 +1203,7 @@ export class HostRuntime {
    * 导完还得去翻日志。落到用户的「文档」目录里最直观。
    */
   async exportHtml(sessionId: string): Promise<string> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session0 = await this.getSession(sessionId);
 
     const row = this.db
       .prepare('SELECT title FROM sessions WHERE id = ?')
@@ -1174,7 +1219,7 @@ export class HostRuntime {
     await fs.mkdir(dir, { recursive: true });
     const outputPath = path.join(dir, `${title}-${stamp}.html`);
 
-    return await this.session!.exportSessionHtml(outputPath);
+    return await session0.exportSessionHtml(outputPath);
   }
 
   /**
@@ -1203,9 +1248,10 @@ export class HostRuntime {
 
   /** 后台任务快照（面板初次打开用） */
   async listTasks(sessionId: string): Promise<TaskInfo[]> {
-    if (!this.session || this.session.id !== sessionId) return [...this.taskMap.values()];
+    const session = this.sessions.get(sessionId);
+    if (!session) return [...this.taskMap.values()];
     // 引擎侧列表只含「未结束」的 subagent；已结束的留在我们自己记的表里
-    for (const running of this.session.listBackgroundTasks()) {
+    for (const running of session.listBackgroundTasks()) {
       const existing = this.taskMap.get(running.taskId);
       if (!existing) {
         this.taskMap.set(running.taskId, {
@@ -1219,8 +1265,8 @@ export class HostRuntime {
   }
 
   async stopTask(sessionId: string, taskId: string): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    await this.session!.stopBackgroundTask(taskId);
+    const session0 = await this.getSession(sessionId);
+    await session0.stopBackgroundTask(taskId);
   }
 
   /**
@@ -1230,8 +1276,8 @@ export class HostRuntime {
    * 对用户没有意义，摆出来只会让树看起来像调试面板。
    */
   async sessionTree(sessionId: string): Promise<TreeEntry[]> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    const snapshot = await this.session!.getSessionTree();
+    const session0 = await this.getSession(sessionId);
+    const snapshot = await session0.getSessionTree();
     const active = new Set(snapshot.activePathIds);
 
     /**
@@ -1320,7 +1366,7 @@ export class HostRuntime {
     entryId: string,
     turnIndex?: number,
   ): Promise<NavigateResult> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session0 = await this.getSession(sessionId);
 
     // 找到那一轮开始前的快照并恢复。
     // 没有快照（非 git 目录 / 老会话）就只回退对话，并如实告知。
@@ -1343,11 +1389,11 @@ export class HostRuntime {
       filesRestoreReason = '没有指定轮次，只回退对话';
     }
 
-    const result = await this.session!.navigateSessionTree(entryId, { summarize: false });
+    const result = await session0.navigateSessionTree(entryId, { summarize: false });
     if (result.cancelled) throw new Error('切换被取消');
 
     // 回到旧节点后，当前轮的状态作废（活在被丢掉的支上）
-    this.activeTurnId = null;
+    this.activeTurns.delete(sessionId);
 
     // 引擎给的时间线才是当前分支的真实内容。
     // 数据库里还存着被丢弃那一支的消息 —— 它是历史存档，不该再显示。
@@ -1424,8 +1470,8 @@ export class HostRuntime {
   }
 
   async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
-    await this.session!.setPlanMode(enabled);
+    const session0 = await this.getSession(sessionId);
+    await session0.setPlanMode(enabled);
     this.modes.planMode = enabled;
     this.emitModes();
   }
@@ -1437,13 +1483,13 @@ export class HostRuntime {
    * 不校验的话传个不存在的值进去，pi 那边会报一个很难懂的错误。
    */
   async setEffort(sessionId: string, effort: string): Promise<void> {
-    if (!this.session || this.session.id !== sessionId) await this.resume(sessionId);
+    const session0 = await this.getSession(sessionId);
     if (!this.modes.effortLevels.includes(effort)) {
       throw new Error(`当前模型不支持「${effort}」档`);
     }
-    await this.session!.setEffort(effort as never);
+    await session0.setEffort(effort as never);
     // 以引擎回读为准：失败时抛错，这里拿到的就是真生效后的值
-    this.modes.effort = this.session!.getEffort();
+    this.modes.effort = session0.getEffort();
     this.emitModes();
   }
 
@@ -1465,11 +1511,12 @@ export class HostRuntime {
    * 只靠我们自己的变量会跟现实脱节。
    * 但 getPlanMode() 可能返回 null（未知），那时退回到我们记的值。
    */  async readModes(sessionId: string): Promise<ModeState> {
-    if (!this.session || this.session.id !== sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
       return { ...this.modes };
     }
     try {
-      const plan = this.session.getPlanMode();
+      const plan = session.getPlanMode();
       if (typeof plan === 'boolean') this.modes.planMode = plan;
     } catch {
       // 拿不到就用记着的值
@@ -1485,11 +1532,12 @@ export class HostRuntime {
    * 写死就会出现「UI 有这个选项，点了引擎报错」。
    */
   private refreshEffort(): void {
-    if (!this.session) return;
+    const session = this.sessions.get(this.activeTurnSessionId ?? "");
+    if (!session) return;
     try {
       // capabilities 不在公开类型上，但它是运行时就能拿到的真值
       const caps = (
-        this.session as unknown as {
+        session as unknown as {
           capabilities?: {
             effort?: { supported?: boolean };
             effortLevels?: Array<{ id?: string }>;
@@ -1509,7 +1557,7 @@ export class HostRuntime {
       const configured = new Set<string>(this.cfg.efforts as readonly string[]);
       const usable = configured.size === 0 ? [] : levels.filter((id) => configured.has(id));
       this.modes.effortLevels = usable;
-      this.modes.effort = usable.length > 0 ? this.session.getEffort() : null;
+      this.modes.effort = usable.length > 0 ? session.getEffort() : null;
     } catch {
       // 拿不到就当不支持，UI 不画那个控件
       this.modes.effortLevels = [];
@@ -1518,9 +1566,10 @@ export class HostRuntime {
   }
 
   async contextUsage(sessionId: string): Promise<ContextUsage | null> {
-    if (!this.session || this.session.id !== sessionId) return null;
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
     try {
-      const usage = await this.session.getContextUsage();
+      const usage = await session.getContextUsage();
       return {
         totalTokens: usage.totalTokens,
         maxTokens: usage.maxTokens,
@@ -1534,13 +1583,20 @@ export class HostRuntime {
     }
   }
 
-  async cancel(): Promise<void> {
-    if (!this.session || !this.activeTurnId) return;
-    const turnId = this.activeTurnId;
-    await this.session.abort().catch(() => undefined);
+  /**
+   * 中断某个会话正在跑的那一轮。
+   *
+   * 接收 sessionId 而不是找「当前会话」——
+   * 多会话并行下，「当前」是个 UI 概念，后台会话也要能单独取消。
+   */
+  async cancel(sessionId: string): Promise<void> {
+    const turnId = this.activeTurns.get(sessionId);
+    if (!turnId) return;
+    const session = this.sessions.get(sessionId);
+    await session?.abort().catch(() => undefined);
     this.recorder.finish(turnId, 'cancelled');
     this.emit({ type: 'turn', turnId, state: 'cancelled' });
-    this.activeTurnId = null;
+    this.activeTurns.delete(sessionId);
     this.turnUnsubs.get(turnId)?.();
     this.turnUnsubs.delete(turnId);
   }
@@ -1605,7 +1661,7 @@ export class HostRuntime {
    */
   archiveSession(sessionId: string): void {
     // 归档正在用的会话时先解绑，避免后续操作写到已归档会话上
-    if (this.session?.id === sessionId) this.session = null;
+    this.sessions.delete(sessionId);
     this.db
       .prepare('UPDATE sessions SET archived_at = ? WHERE id = ?')
       .run(Date.now(), sessionId);
@@ -1651,7 +1707,7 @@ export class HostRuntime {
    * 破坏性操作，UI 层必须二次确认。
    */
   deleteSession(sessionId: string): void {
-    if (this.session?.id === sessionId) this.session = null;
+    this.sessions.delete(sessionId);
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
