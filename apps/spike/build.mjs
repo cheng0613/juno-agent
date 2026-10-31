@@ -36,6 +36,7 @@ await build({
     probeTasks: 'src/probeTasks.ts',
     probeTree: 'src/probeTree.ts',
     probeImage: 'src/probeImage.ts',
+    benchParallel: 'src/benchParallel.ts',
   },
   bundle: true,
   platform: 'node',

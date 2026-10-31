@@ -5,6 +5,7 @@
 .autotest/
 .packaged-test/
 .tmp/
+.bench/
 release/
 apps/desktop/.appdata/
 apps/desktop/.autotest/
