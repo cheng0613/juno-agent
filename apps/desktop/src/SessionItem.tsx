@@ -83,6 +83,7 @@ export function SessionItem({
   return (
     <div
       data-testid="session-item"
+      data-session-id={session.id}
       className={`group relative flex items-center rounded-md ${
         active ? 'bg-[var(--surface-active)]' : 'hover:bg-surface-hover'
       }`}

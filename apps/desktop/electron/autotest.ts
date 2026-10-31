@@ -3345,3 +3345,128 @@ export async function runEventRoutingTest(win: BrowserWindow, runtime: HostRunti
     app.quit();
   }
 }
+
+/**
+ * 「看着 worker 干活」验收。
+ *
+ * 多会话并行后，用户切走再切回来，应该能看到那个会话**还在流的文本**，
+ * 而不是一片空白直到跑完。
+ *
+ * 这也是 ORCA 的核心体验：派出去的 worker 在干什么，得看得见。
+ */
+export async function runLiveViewTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const outDir = outDirOf();
+  await fs.mkdir(outDir, { recursive: true });
+  const log: string[] = [];
+  const note = (s: string) => {
+    log.push(s);
+    console.log(`[autotest/live] ${s}`);
+  };
+
+  const textBySession = new Map<string, number>();
+  runtime.onEvent((e) => {
+    if (e.type === 'approval') runtime.approve(e.request.requestId, 'allow');
+    if (e.type === 'text') textBySession.set(e.sessionId, (textBySession.get(e.sessionId) ?? 0) + 1);
+  });
+
+  const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
+    const startedAt = Date.now();
+    while (!pred()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error(`超时等待: ${label}`);
+      await delay(200);
+    }
+  };
+
+  try {
+    await delay(2500);
+    // 走 UI 建会话，保证侧栏有两项可点
+    await win.webContents.executeJavaScript(
+      `(() => { document.querySelector('.btn-new')?.click(); return 'ok'; })()`,
+    );
+    await delay(1200);
+    const sessions = await runtime.listSessions();
+    if (sessions.length < 2) throw new Error(`需要两个会话，实际 ${sessions.length}`);
+    const a = sessions[1]!.id;
+    const b = sessions[0]!.id;
+    note(`A=${a.slice(0, 8)} B=${b.slice(0, 8)}`);
+
+    // A 在后台写一大段（流式会持续几秒）
+    await runtime.send(
+      a,
+      '请把「正在写长文」这五个字重复 300 遍，每遍单独一行，中间不要任何其他内容。',
+    );
+    note('A 已发送长任务');
+
+    // 切到 B：按 data-session-id 精确点，不靠位置/激活状态猜
+    const switchTo = (sid: string) => `
+      (() => {
+        const el = document.querySelector('[data-session-id="' + ${JSON.stringify(sid)} + '"]');
+        if (!el) return 'no-item';
+        const btn = el.querySelector('button');
+        if (!btn) return 'no-btn';
+        btn.click();
+        return 'ok';
+      })()`;
+    note(`切到 B: ${await win.webContents.executeJavaScript(switchTo(b))}`);
+    await delay(600);
+    note('已切到 B');
+    // B 此时看不到 A 的字
+    const bText1 = await win.webContents.executeJavaScript(
+      `(() => { const el = document.querySelector('.bubble-ai.streaming'); return el ? el.innerText : ''; })()`,
+    );
+    note(`B 界面流式内容(切换后): ${JSON.stringify(String(bText1).slice(0, 30))}`);
+
+    // 等第一段文本出来就立刻切回。
+    // 模型写 300 行要好几秒，这个窗口足够。
+    await waitFor(() => (textBySession.get(a) ?? 0) >= 1, 60_000, 'A 开始流式');
+    note(`A 已产出 ${textBySession.get(a)} 段，立即切回`);
+
+    // 切回 A，应该能看见它正在写的内容
+    note(`切回 A: ${await win.webContents.executeJavaScript(switchTo(a))}`);
+    await delay(250);
+    const titlesNow = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('[data-testid="session-item"]')].map((e) => ({ t: e.innerText.trim().slice(0,10), active: e.className.includes('surface-active') }))`,
+    );
+    note(`切回后侧栏状态: ${JSON.stringify(titlesNow)}`);
+    note('已切回 A');
+
+    const aLive = await win.webContents.executeJavaScript(
+      `(() => { const el = document.querySelector('.bubble-ai.streaming'); return el ? el.innerText : ''; })()`,
+    );
+    const aLiveLen = String(aLive).length;
+    note(`A 切回后可见的流式文本长度: ${aLiveLen}`);
+    note(`A 可见内容前 40 字: ${JSON.stringify(String(aLive).slice(0, 40))}`);
+    await shootTo(win, '51-live-view');
+    note('截图 51-live-view');
+
+    if (aLiveLen === 0) {
+      // 分辨两种可能：缓存没生效，还是 A 已经写完了
+      const aStillRunning = await win.webContents.executeJavaScript(
+        `document.querySelectorAll('.send.stop').length > 0`,
+      );
+      throw new Error(
+        `切回 A 看不到流式内容（A 是否还在跑: ${aStillRunning}，已产出 ${textBySession.get(a)} 段）`,
+      );
+    }
+
+    await fs.writeFile(
+      path.join(outDir, 'live-result.json'),
+      JSON.stringify({ ok: true, aLiveLen, bText: String(bText1).slice(0, 50), log }, null, 2),
+      'utf8',
+    );
+    note('完成');
+  } catch (error) {
+    note(`失败: ${error instanceof Error ? error.message : String(error)}`);
+    await shootTo(win, '99-live-failed').catch(() => undefined);
+    await fs
+      .writeFile(
+        path.join(outDir, 'live-result.json'),
+        JSON.stringify({ ok: false, error: String(error), log }, null, 2),
+        'utf8',
+      )
+      .catch(() => undefined);
+  } finally {
+    await delay(400);
+    app.quit();
+  }
+}

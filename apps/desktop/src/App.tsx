@@ -152,6 +152,16 @@ export function App() {
   const [scrollTick, setScrollTick] = useState(0);
 
   const liveRef = useRef('');
+  /**
+   * 按会话缓存的流式文本。
+   *
+   * 为什么要缓存而不是丢弃：多会话并行时用户会切来切去，
+   * 切回去应该能看到「它还在写」，而不是一片空白直到跑完。
+   *
+   * 内存代价可忽略：每个会话最多几十 KB 文本，并发 5 个也就几百 KB。
+   * 轮结束时清掉（内容已落库，再留着会跟历史重复）。
+   */
+  const liveBySession = useRef<Map<string, string>>(new Map());
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -211,18 +221,17 @@ export function App() {
     const off = host.onEvent((event) => {
       switch (event.type) {
         case 'text': {
-          // 多会话并行：后台会话的事件不能进当前会话的界面。
-          // 不加这道判断的话，后台会话的流式文字会串到当前对话里。
+          // 不管是不是当前会话都先缓存 —— 用户随时可能切过去看它写到哪了
+          const cached = event.isFinal
+            ? event.text
+            : (liveBySession.current.get(event.sessionId) ?? '') + event.text;
+          liveBySession.current.set(event.sessionId, cached);
+
+          // 后台会话只缓存、不上屏（否则会串到当前对话里）
           if (event.sessionId !== activeRef.current) return;
 
-          if (event.isFinal) {
-            // 终态文本整条替换，避免增量拼接重复
-            liveRef.current = event.text;
-            setLiveText(event.text);
-          } else {
-            liveRef.current += event.text;
-            setLiveText(liveRef.current);
-          }
+          liveRef.current = cached;
+          setLiveText(cached);
           return;
         }
 
@@ -304,6 +313,8 @@ export function App() {
           }
           // 收口：重新从数据库拉一次，拿到权威的 message id 与顺序
           setRunning(false);
+          // 内容已落库，缓存必须清掉，否则下次切回来会看到重复的一份
+          liveBySession.current.delete(event.sessionId);
           liveRef.current = '';
           setLiveText('');
           const sid = activeRef.current;
@@ -676,8 +687,10 @@ export function App() {
     const rows = await host.loadSession(id);
     setActiveId(id);
     setMessages(rows);
-    setLiveText('');
-    liveRef.current = '';
+    // 切过去时把该会话还在流的文本接上 —— 这就是「看着它干活」
+    const cached = liveBySession.current.get(id) ?? '';
+    setLiveText(cached);
+    liveRef.current = cached;
     setScrollTick((n) => n + 1);
     setUsage(null);
     // 改动面板属于上一轮的，切会话必须清掉，否则会误以为新会话改过文件
