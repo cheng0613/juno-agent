@@ -10,6 +10,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { StatusLine } from './StatusLine';
 import { TaskCard } from './TaskCard';
 import { TreePanel } from './TreePanel';
+import { WorkerDialog, type WorkerDraft } from './WorkerDialog';
 import { WorkerPanel } from './WorkerPanel';
 import { createMockHost } from './devMock';
 import type {
@@ -125,6 +126,8 @@ export function App() {
   }, []);
   const [workerBusy, setWorkerBusy] = useState<Set<string>>(new Set());
   const [creatingWorker, setCreatingWorker] = useState(false);
+  /** 「开启协同」弹窗是否打开 */
+  const [workerDialogOpen, setWorkerDialogOpen] = useState(false);
   const [workerError, setWorkerError] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   // 审批时是否记住这次选择；每次新审批重新开始
@@ -810,22 +813,41 @@ export function App() {
   }, [activeId, loadWorkers]);
 
   /** 建一个 worker。建完立刻选中它，让用户看见「新的人来了」 */
-  const createWorker = useCallback(async () => {
+  /** 打开「开启协同」弹窗。真正的建在 submitWorker 里 */
+  const createWorker = useCallback(() => {
     if (!activeId || creatingWorker) return;
-    setCreatingWorker(true);
     setWorkerError(null);
-    try {
-      const w = await host.createWorker(activeId, { role: 'developer' });
-      setActiveWorkerId(w.id);
-      await loadWorkers(activeId);
-      // worker 会话会出现在会话表里，必须重拉一次才能把它从主列表过滤掉
-      setSessions(await host.listSessions());
-    } catch (error) {
-      setWorkerError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCreatingWorker(false);
-    }
-  }, [activeId, creatingWorker, loadWorkers]);
+    setWorkerDialogOpen(true);
+  }, [activeId, creatingWorker]);
+
+  /** 弹窗提交：带上角色 / 模型 / 权限 / 初始任务去建 */
+  const submitWorker = useCallback(
+    async (draft: WorkerDraft) => {
+      if (!activeId || creatingWorker) return;
+      setCreatingWorker(true);
+      setWorkerError(null);
+      try {
+        const w = await host.createWorker(activeId, {
+          role: draft.role,
+          ...(draft.label ? { label: draft.label } : {}),
+          model: draft.model,
+          permissionMode: draft.permissionMode,
+          isolate: draft.isolate,
+          ...(draft.firstTask ? { firstTask: draft.firstTask } : {}),
+        });
+        setActiveWorkerId(w.id);
+        await loadWorkers(activeId);
+        // worker 会话会出现在会话表里，必须重拉一次才能把它从主列表过滤掉
+        setSessions(await host.listSessions());
+        setWorkerDialogOpen(false);
+      } catch (error) {
+        setWorkerError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setCreatingWorker(false);
+      }
+    },
+    [activeId, creatingWorker, loadWorkers],
+  );
 
   const removeWorker = useCallback(
     async (workerId: string) => {
@@ -1406,6 +1428,18 @@ export function App() {
           />
         )}
       </main>
+
+      {workerDialogOpen && (
+        <WorkerDialog
+          models={models}
+          inheritedModel={model}
+          canIsolate
+          submitting={creatingWorker}
+          error={workerError}
+          onCancel={() => setWorkerDialogOpen(false)}
+          onSubmit={(draft) => void submitWorker(draft)}
+        />
+      )}
 
       {/* ---------------- 审批弹层 ---------------- */}
       {approval && (

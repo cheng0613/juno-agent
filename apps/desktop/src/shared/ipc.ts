@@ -487,7 +487,16 @@ export interface HostBridge {
   listWorkers(leadSessionId: string): Promise<UiWorker[]>;
   createWorker(
     leadSessionId: string,
-    config: { role: string; label?: string; isolate?: boolean },
+    config: {
+      role: string;
+      label?: string;
+      isolate?: boolean;
+      /** 不传就继承 Lead */
+      model?: string;
+      permissionMode?: PermissionModeChoice;
+      /** 建成后立即派给它 */
+      firstTask?: string;
+    },
   ): Promise<UiWorker>;
   /** 只断开关联，不删会话 */
   removeWorker(workerId: string): Promise<void>;

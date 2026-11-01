@@ -62,6 +62,13 @@ export interface OrcaWorkerConfig {
    * 建完还能随时切（runtime.setPermissionMode），这里只是初始值。
    */
   permissionMode?: 'ask' | 'auto' | 'bypassPermissions';
+  /**
+   * 初始任务：建成后立即派给它。
+   *
+   * 有这一项就不用「建完再去面板里输入」两步 ——
+   * 开协同的时候往往就是心里已经有活要派。
+   */
+  firstTask?: string;
 }
 
 export interface OrcaTeamRecord {

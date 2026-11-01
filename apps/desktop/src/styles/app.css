@@ -1817,3 +1817,368 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   pointer-events: none;
   user-select: none;
 }
+
+/* ============================================================
+ * 「开启协同」弹窗
+ *
+ * 结构照搬 Cindy：角色胶囊 → 项目 → 模型 → 权限 → 初始任务。
+ * 视觉用我们的 tokens（本来就是从 Cindy 派生的），
+ * 深色模式下自动适配，不用写两套。
+ * ============================================================ */
+
+.dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  width: min(520px, 100%);
+  max-height: min(88vh, 780px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.22);
+  overflow: hidden;
+}
+
+.dialog-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5) var(--space-2);
+}
+.dialog-title {
+  font-size: var(--text-16);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+.dialog-close {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--text-13);
+}
+.dialog-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.dialog-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-5) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.field-label {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.field-hint-icon {
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+  cursor: help;
+}
+.field-note {
+  margin: 2px 0 0;
+  font-size: var(--text-12);
+  line-height: 1.6;
+  color: var(--text-tertiary);
+}
+
+/* 角色胶囊 */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.chip {
+  font: inherit;
+  font-size: var(--text-13);
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.chip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.chip.active {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+  font-weight: var(--font-medium);
+}
+
+/* 输入 */
+.input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 0 10px;
+  background: var(--surface);
+}
+.input-wrap:focus-within {
+  border-color: var(--accent-emphasis);
+}
+.input-prefix {
+  color: var(--text-tertiary);
+  font-size: var(--text-13);
+}
+.text-input {
+  font: inherit;
+  font-size: var(--text-13);
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 8px 0;
+}
+.text-input::placeholder {
+  color: var(--text-tertiary);
+}
+/* 独立的 text-input（不包在 input-wrap 里时） */
+.field > .text-input {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  background: var(--surface);
+}
+.field > .text-input:focus {
+  border-color: var(--accent-emphasis);
+}
+.text-area {
+  font: inherit;
+  font-size: var(--text-13);
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 84px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+.text-area:focus {
+  outline: none;
+  border-color: var(--accent-emphasis);
+}
+.text-area::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* 项目行 */
+.project-row {
+  display: flex;
+}
+.project-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-13);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-12);
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 6px;
+}
+.checkbox-row input {
+  cursor: pointer;
+}
+.checkbox-row:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 下拉 */
+.select-wrap {
+  position: relative;
+}
+.select-trigger {
+  font: inherit;
+  font-size: var(--text-13);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.select-trigger:hover {
+  background: var(--surface-hover);
+}
+.select-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid var(--border-default);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-11);
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+.select-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-caret {
+  color: var(--text-tertiary);
+  font-size: var(--text-11);
+}
+.select-menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.16);
+  padding: 4px;
+}
+.select-item {
+  font: inherit;
+  font-size: var(--text-13);
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.select-item:hover {
+  background: var(--surface-hover);
+}
+.select-item.active {
+  background: var(--surface-chip);
+  font-weight: var(--font-medium);
+}
+
+/* 权限行 */
+.perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 4px 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+}
+.perm-label {
+  font-size: var(--text-13);
+  color: var(--text-secondary);
+  padding-left: 10px;
+}
+.perm-trigger {
+  font: inherit;
+  font-size: var(--text-13);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.perm-trigger:hover {
+  background: var(--surface-hover);
+}
+/* 全放行用警示色：这是唯一一个「出事了收不回来」的选项 */
+.perm-trigger.danger {
+  color: var(--warning-text, #b7791f);
+}
+.perm-warn {
+  font-size: var(--text-12);
+}
+
+.dialog-error {
+  font-size: var(--text-12);
+  color: var(--danger, #c0392b);
+  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
+.dialog-foot {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-5) var(--space-5);
+}
+.dialog-primary {
+  font: inherit;
+  font-size: var(--text-14);
+  font-weight: var(--font-medium);
+  width: 100%;
+  padding: 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-cta-bg);
+  color: var(--text-primary-inv);
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.dialog-primary:hover {
+  opacity: 0.88;
+}
+.dialog-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

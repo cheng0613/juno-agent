@@ -3788,12 +3788,30 @@ export async function runOrcaUiTest(win: BrowserWindow, runtime: HostRuntime): P
     check(panelOpen === true, '点协同按钮后面板没出现');
     await shootTo(win, '61-orca-empty');
 
-    /* ---- 2. 点「+ Worker」建三个 worker ---- */
-    for (let i = 1; i <= 3; i += 1) {
+    /* ---- 2. 点「+ Worker」→ 弹窗 → 提交，建三个 worker ----
+     * 现在建 worker 要先过「开启协同」弹窗（选角色/模型/权限/初始任务），
+     * 所以每一步都多两次点击。
+     */
+    const roles = ['developer', 'designer', 'tester'];
+    for (let i = 0; i < roles.length; i += 1) {
       await js(`document.querySelector('[data-testid="orca-create"]')?.click()`);
-      await delay(1800);
+      await delay(500);
+      const dialogOpen = await js(`!!document.querySelector('[data-testid="worker-dialog"]')`);
+      note(`弹窗打开: ${dialogOpen}`);
+      if (!dialogOpen) throw new Error('点 + Worker 后没有弹窗');
+      // 第一个弹窗截一图，确认表单布局
+      if (i === 0) await shootTo(win, '61b-worker-dialog');
+
+      // 选角色
+      await js(`document.querySelector('[data-testid="worker-role-${roles[i]}"]')?.click()`);
+      await delay(150);
+      await js(`document.querySelector('[data-testid="worker-submit"]')?.click()`);
+      await delay(2200);
+
+      const closed = await js(`!document.querySelector('[data-testid="worker-dialog"]')`);
       const n = await js(`document.querySelectorAll('[data-testid="orca-pill"]').length`);
-      note(`建第 ${i} 个后胶囊数: ${n}`);
+      note(`建第 ${i + 1} 个（${roles[i]}）后：弹窗关闭=${closed} 胶囊数=${n}`);
+      if (!closed) throw new Error('提交后弹窗没关，可能建失败了');
     }
 
     const pills = await js(
@@ -3812,7 +3830,10 @@ export async function runOrcaUiTest(win: BrowserWindow, runtime: HostRuntime): P
          .map(el => el.textContent?.trim() ?? '')`,
     );
     note(`侧栏条目: ${JSON.stringify(sidebarTitles)}`);
-    const leaked = sidebarTitles.filter((t: string) => t.startsWith('developer'));
+    // 三个 worker 分别用了 developer / designer / tester 角色，都要过滤掉
+    const leaked = sidebarTitles.filter((t: string) =>
+      ['developer', 'designer', 'tester'].some((r) => t.startsWith(r)),
+    );
     check(
       leaked.length === 0,
       `worker 漏进了主列表: ${JSON.stringify(leaked)}（应该只在右侧协同面板里）`,

@@ -1989,6 +1989,20 @@ export class HostRuntime {
       }
     }
 
+    /*
+     * 初始任务：建成后立即派活。
+     *
+     * 先建后派而不是「建的时候带任务」—— 派活是 session.send，
+     * 那时会话、worktree、权限档位都已经就绪了。
+     * 失败不抛：worker 已经建好了，任务没派成不该让整个操作失败。
+     */
+    const firstTask = config.firstTask?.trim();
+    if (firstTask) {
+      void this.send(sessionId, firstTask).catch((error: unknown) => {
+        console.warn('[orca] 初始任务派发失败:', String(error));
+      });
+    }
+
     return record;
   }
 
