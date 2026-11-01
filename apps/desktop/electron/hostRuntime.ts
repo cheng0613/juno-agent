@@ -64,6 +64,7 @@ import { createSavepoint, restoreSavepoint } from './gitSavepoint.js';
 import { saveImageAttachment, type SavedImage } from './imageAttachment.js';
 import { prepareWorkerWorktree, removeWorkerWorktree } from './workerWorktree.js';
 import { startOrcaToolServer, type OrcaToolServer } from './orcaToolServer.js';
+import { createOrcaProvider, ORCA_PROVIDER_NAME, type OrcaProviderHost } from './orcaProvider.js';
 
 export interface HostConfig {
   upstreamRoot: string;
@@ -365,6 +366,40 @@ export class HostRuntime {
     string,
     { role: 'lead' | 'worker'; sessionId: string; workerId?: string }
   >();
+
+  /**
+   * ORCA 的 McpProvider。
+   *
+   * 懒加载：字段初始化时 this.orca 还是 undefined（OrcaStore 在 init() 里建），
+   * 直接引用会炸。用 getter 让它在第一次用到时才构造。
+   */
+  private orcaProviderCache: ReturnType<typeof createOrcaProvider> | null = null;
+  private get orcaProvider(): ReturnType<typeof createOrcaProvider> {
+    if (!this.orcaProviderCache) {
+      this.orcaProviderCache = createOrcaProvider({
+        createWorker: (leadId, config) => this.createWorker(leadId, config),
+        sendToWorker: (workerId, text) => this.sendToWorker(workerId, text),
+        listWorkers: (leadId) =>
+          this.orca.listWorkersByLead(leadId).map((w) => ({
+            id: w.id,
+            label: w.label ?? w.role,
+            role: w.role,
+            status: w.status,
+          })),
+        reportToLead: (workerId, message) => this.reportToLead(workerId, message),
+        workerOf: (sessionId) => {
+          const w = this.orca.getWorkerBySession(sessionId);
+          if (!w) return null;
+          const row = this.db
+            .prepare('SELECT lead_session_id AS id FROM orca_teams WHERE id = ?')
+            .get(w.teamId) as { id: string } | undefined;
+          return row ? { workerId: w.id, leadSessionId: row.id } : null;
+        },
+      });
+    }
+    return this.orcaProviderCache;
+  }
+
   private recorder!: SessionRecorder;
   private maker!: Maker;
   /**
@@ -506,6 +541,41 @@ export class HostRuntime {
           : null,
       agentHome: this.cfg.agentHome,
       logger: logger.child('pi'),
+      /*
+       * ORCA 声明成 McpProvider。
+       *
+       * 这样工具定义和「怎么注入」解耦 —— 以后接 claude-code / codex
+       * 只要加对应的 toXxxConfig，工具定义一行不用改。
+       */
+      mcpProviders: [this.orcaProvider],
+      /*
+       * 把 provider 转成 pi 能消费的 bridge 配置。
+       *
+       * pi 的 MCP 是「本地 HTTP server + LOCAL_AGENT_CLIENT」形态，
+       * 真正的 server 在 startOrcaTools() 里起。
+       * 这里只负责按 session 签发身份 token。
+       */
+      preparePiExtraSpawnConfig: async (providers, ctx) => {
+        const orca = providers.find((p) => p.name === ORCA_PROVIDER_NAME);
+        if (!orca || !this.orcaTools) return null;
+        // 认不出 session 就不挂工具：避免「不知道谁在调」时放行
+        if (!ctx?.sessionId) return null;
+
+        const token = `orca-${randomUUID()}`;
+        const worker = this.orca.getWorkerBySession(ctx.sessionId);
+        this.orcaTokens.set(token, {
+          role: worker ? 'worker' : 'lead',
+          sessionId: ctx.sessionId,
+          ...(worker ? { workerId: worker.id } : {}),
+        });
+
+        return {
+          mcpBridge: {
+            token,
+            servers: [{ name: ORCA_PROVIDER_NAME, url: this.orcaTools.url }],
+          },
+        };
+      },
     });
 
     this.maker = new Maker({ agents: { pi: agent }, storage: this.storage, logger });
@@ -692,16 +762,15 @@ export class HostRuntime {
      * 预先指定 id 是 maker 支持的能力（resume 就是这么用的）。
      */
     const newSessionId = randomUUID();
-    const pendingToken =
-      withOrcaTools && this.orcaTools ? `orca-${randomUUID()}` : null;
-    if (pendingToken && withOrcaTools) {
-      this.orcaTokens.set(pendingToken, {
-        role: withOrcaTools,
-        sessionId: newSessionId,
-        ...(workerIdForTools ? { workerId: workerIdForTools } : {}),
-      });
-    }
-
+    /*
+     * 不再手动注入 LOCAL_AGENT_CLIENT。
+     *
+     * 之前是自己签发 token + 拼 mcpBridge，问题有两个：
+     *   1. 工具只能在 pi 上用，换 harness 要重写
+     *   2. token 登记和会话创建是手动同步的，容易错位（踩过 401）
+     * 现在统一走 preparePiExtraSpawnConfig：maker-core 每次 spawn 前问一遍，
+     * 按当时的 sessionId 签发身份，不依赖调用方的时序。
+     */
     const session = await this.maker.createSession({
       id: newSessionId,
       agentKind: 'pi',
@@ -710,24 +779,7 @@ export class HostRuntime {
       title,
       // 传 undefined 时引擎用自己的 45 分钟默认值；我们显式给 15 分钟
       ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
-      ...(pendingToken
-        ? {
-            [LOCAL_AGENT_CLIENT]: {
-              url: this.orcaTools!.url,
-              token: pendingToken,
-              hostToolsOnly: false,
-              mcpName: 'orca',
-            },
-          }
-        : {}),
     });
-    if (pendingToken && withOrcaTools) {
-      this.orcaTokens.set(pendingToken, {
-        role: withOrcaTools,
-        sessionId: session.id,
-        ...(workerIdForTools ? { workerId: workerIdForTools } : {}),
-      });
-    }
     this.attach(session);
     return session.id;
   }
@@ -777,17 +829,11 @@ export class HostRuntime {
         ? 'worker'
         : 'lead'
       : false;
-    // resume 也要发新 token —— 旧 token 对已经不存在的进程没用了
-    const resumeToken =
-      withOrcaTools && this.orcaTools ? `orca-${randomUUID()}` : null;
-    // 同样要**先登记再建会话**：pi 一启动就连 MCP server
-    if (resumeToken && withOrcaTools) {
-      this.orcaTokens.set(resumeToken, {
-        role: withOrcaTools,
-        sessionId,
-        ...(workerRow ? { workerId: workerRow.id } : {}),
-      });
-    }
+    /*
+     * 不手动注入 LOCAL_AGENT_CLIENT。
+     * preparePiExtraSpawnConfig 会在每次 spawn 时按 sessionId 重新签发身份，
+     * resume 天然覆盖（旧 token 对已经不存在的进程本来就没用了）。
+     */
     const session = await this.maker.createSession({
       id: sessionId,
       agentKind: 'pi',
@@ -795,24 +841,7 @@ export class HostRuntime {
       model: meta.model,
       title: meta.title,
       ...(this.cfg.turnStallMs !== undefined ? { turnStallMs: this.cfg.turnStallMs } : {}),
-      ...(resumeToken
-        ? {
-            [LOCAL_AGENT_CLIENT]: {
-              url: this.orcaTools!.url,
-              token: resumeToken,
-              hostToolsOnly: false,
-              mcpName: 'orca',
-            },
-          }
-        : {}),
     });
-    if (resumeToken && withOrcaTools) {
-      this.orcaTokens.set(resumeToken, {
-        role: withOrcaTools,
-        sessionId,
-        ...(workerRow ? { workerId: workerRow.id } : {}),
-      });
-    }
     this.attach(session);
     // 重建会话后必须把额外目录重新交给引擎 —— 它们只存在于运行时，
     // 不重放的话重启一次就白设了。

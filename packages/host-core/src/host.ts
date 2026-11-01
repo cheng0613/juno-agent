@@ -26,6 +26,7 @@ import {
   type AuthState,
   type Effort,
   type Logger,
+  type McpProvider,
   type PiNativeApi,
   type SessionMeta,
   type SessionStorage,
@@ -163,6 +164,23 @@ export interface PiHostOptions {
   defaultEffort?: Effort | null;
   /** pi 配置目录（内含 models.json / sessions/） */
   agentHome: string;
+  /**
+   * 宿主注入的 MCP 工具提供者。
+   *
+   * 为什么用这个而不直接传 LOCAL_AGENT_CLIENT：
+   * McpProvider 是 maker-core 的通用抽象，同一份工具定义能同时给
+   * claude-code（SDK 形态）、codex（HTTP 形态）、pi（bridge 形态）用。
+   * 绑死 LOCAL_AGENT_CLIENT 的话，ORCA 就只能跑在 pi 上。
+   */
+  mcpProviders?: McpProvider[];
+  /**
+   * 把 mcpProviders 转成 pi 能消费的 bridge 配置。
+   *
+   * pi 的 MCP 是「本地 HTTP bridge + LOCAL_AGENT_CLIENT」形态，
+   * 跟 Claude 的 in-process server / Codex 的远程配置都不一样，
+   * 所以转换逻辑归宿主 —— maker-core 只认这个回调。
+   */
+  preparePiExtraSpawnConfig?: AgentDeps['preparePiExtraSpawnConfig'];
   logger?: Logger;
 }
 
@@ -250,6 +268,11 @@ export function createPiAgent(opts: PiHostOptions): PiAgent {
     // 关键：上一次写死 anthropic-messages，接 OpenAI 兼容端点会直接把请求打歪
     resolvePiGatewayModelApi: () => api,
     resolvePiAgentHome: () => opts.agentHome,
+    // MCP 工具提供者透传：ORCA 等能力走这一层，而不是写死 LOCAL_AGENT_CLIENT
+    ...(opts.mcpProviders ? { mcpProviders: opts.mcpProviders } : {}),
+    ...(opts.preparePiExtraSpawnConfig
+      ? { preparePiExtraSpawnConfig: opts.preparePiExtraSpawnConfig }
+      : {}),
   };
 
   return new PiAgent(deps);

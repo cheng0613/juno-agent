@@ -294,3 +294,70 @@ createPiAgent({
 
 **估算**：半天。风险点是 `preparePiExtraSpawnConfig` 的类型契约要摸清
 （返回值形状、生命周期、shutdown 语义）。
+
+---
+
+## 十一、修正：McpProvider 不解决「模型找不到工具」
+
+我之前判断「改 McpProvider 可能顺带解决工具调不动的问题」，**验证后是错的**。
+
+### 实测结果
+
+改成 `McpProvider` + `preparePiExtraSpawnConfig` 后：
+
+```
+[host/pi] pi startup stage { stage: 'mcp-ready', mcpServerCount: 1, status: 'ok' }
+[orca/tools] REQ POST /mcp   ← bridge 连上了
+[cindy-bridge] MCP gateway ready (3 tools)
+```
+
+但让模型列工具，还是：
+
+```
+read / bash / edit / write / ask_user_question / grep / find / ls
+powershell / cindy_mcp_list_tools / cindy_mcp_call_tool / subagent
+```
+
+**没有 `create_worker`。**
+
+### 为什么
+
+`preparePiExtraSpawnConfig` 和 `LOCAL_AGENT_CLIENT` **本质是同一个通道** ——
+都产出 `mcpBridge: { token, servers }`，pi 拿到后统一走
+`cindy_mcp_list_tools` + `cindy_mcp_call_tool` 二段网关。
+
+pi 的架构里**没有旁路**：任何 MCP server 进 pi 都要过网关。
+我搜了 `directExpose` / `passthrough` / `bypassGateway`，都不存在。
+
+### Cindy 的「顶层直接注册」是什么意思
+
+`orca/server.ts` 说的是相对 **`cindy_helper` 的二级入口**：
+
+> 协同工具藏在 list_tools/call_tool 后面时…… 提到顶层直接可见后
+> 代价是这些工具 schema 进系统提示前缀（固定成本、缓存稳定）
+
+指的是「挂在 `cindy_orca` server 顶层，而不是再套一层 `cindy_helper.call_tool`」。
+**但 `cindy_orca` 本身进 pi 仍要过网关。**
+
+所以 Cindy 在 pi 上跑 ORCA 时，模型同样需要先 discover 再 call。
+它优化的是**少一层嵌套**，不是完全绕过。
+
+### 那 Cindy 为什么能用
+
+它支持的 **claude-code / codex** 是直连 MCP（`toClaudeSdkConfig` /
+`toCodexMcpConfig`），工具直接进模型视野。**只有 pi 受网关限制。**
+
+这反过来说明：**pi 不是一个适合跑 ORCA lead 的 harness。**
+
+### 这对我们意味着什么
+
+改 McpProvider 的价值变成两个（都不是原目标）：
+
+1. **跨 harness 复用**：将来接 claude-code / codex，ORCA 定义一行不用改
+2. **代码更干净**：工具定义和注入方式解耦，不用手动管 token 生命周期
+
+但**pi 上「模型自主派活」依然走不通**，除非：
+- 换 harness（接 claude-code 或 codex）
+- 或接受「模型必须走 cindy_mcp_call_tool」这个现实，用提示词引导（试过，两个模型都不听）
+
+**当前 McpProvider 改造已提交（代码更好，但没解决核心问题）。**
