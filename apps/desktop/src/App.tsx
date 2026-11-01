@@ -5,7 +5,7 @@ import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
 import { ArchivedPanel } from './ArchivedPanel';
-import { SessionItem } from './SessionItem';
+import { Sidebar } from './Sidebar';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusLine } from './StatusLine';
 import { TaskCard } from './TaskCard';
@@ -90,6 +90,8 @@ export function App() {
   const [running, setRunning] = useState(false);
   /** 哪些会话正在跑（多会话并行时侧栏要显示出来） */
   const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+  /** 侧栏折叠态。窄窗口自己收，用户也能手动切 */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   /* ---- ORCA 协作 ---- */
   /** 当前 Lead 的 worker 列表（由宿主投影推送，不自己推导） */
@@ -1052,66 +1054,31 @@ export function App() {
       )}
 
       {/* ---------------- 侧边栏 ---------------- */}
-      <aside className="sidebar">
-        <div className="sidebar-head">
-          <span className="brand">Juno</span>
-          {isMock && <span className="badge">预览模式</span>}
-        </div>
+      <Sidebar
+        sessions={sessions}
+        activeId={activeId}
+        busySessions={busySessions}
+        archivedCount={archivedCount}
+        dark={dark}
+        isMock={isMock}
+        view="sessions"
+        onNewSession={() => void newSession()}
+        onCreate={() => void newSession()}
+        onSelect={(id) => void switchSession(id)}
+        onRename={(id, title) => void renameSession(id, title)}
+        onPin={(id, p) => void pinSession(id, p)}
+        onArchive={(id) => void archiveSession(id)}
+        onDelete={(id) => void deleteSession(id)}
+        onOpenArchived={() => setArchivedOpen(true)}
+        onOpenSettings={() => setSettingsMode('drawer')}
+        onToggleTheme={toggleTheme}
+        onToggleOrca={() => void (orcaOpen ? setOrcaOpen(false) : openOrca())}
+        orcaOpen={orcaOpen}
+        workerCount={workers.length}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+      />
 
-        <button className="btn-new" onClick={newSession}>
-          + 新会话
-        </button>
-
-        <nav className="session-list">
-          {/* worker 不进主列表 —— 它们属于 Lead，在右侧协同面板里 */}
-          {sessions.filter((s) => s.orcaRole !== 'worker').map((s) => (
-            <SessionItem
-              key={s.id}
-              session={s}
-              active={s.id === activeId}
-              busy={busySessions.has(s.id)}
-              onSelect={() => void switchSession(s.id)}
-              onRename={(title) => void renameSession(s.id, title)}
-              onPin={(pinned) => void pinSession(s.id, pinned)}
-              onArchive={() => void archiveSession(s.id)}
-              onDelete={() => void deleteSession(s.id)}
-            />
-          ))}
-        </nav>
-
-        <button
-          type="button"
-          className={`btn-orca${orcaOpen ? ' active' : ''}`}
-          onClick={() => void (orcaOpen ? setOrcaOpen(false) : openOrca())}
-          data-testid="orca-toggle"
-        >
-          协同
-          {workers.length > 0 && <span className="btn-orca-count">{workers.length}</span>}
-        </button>
-
-        <div className="sidebar-foot">
-          <button className="ghost" onClick={toggleTheme}>
-            {dark ? '浅色' : '深色'}
-          </button>
-          {archivedCount > 0 && (
-            <button
-              data-testid="archived-entry"
-              className="ghost"
-              title="查看并恢复已归档的会话"
-              onClick={() => setArchivedOpen(true)}
-            >
-              已归档 {archivedCount}
-            </button>
-          )}
-          <button
-            className="ghost"
-            title="设置（模型、密钥、审批策略）"
-            onClick={() => setSettingsMode('drawer')}
-          >
-            设置
-          </button>
-        </div>
-      </aside>
 
       {settingsMode === 'drawer' && (
         <SettingsPanel

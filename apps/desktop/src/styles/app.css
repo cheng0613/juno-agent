@@ -42,42 +42,144 @@
   height: 100dvh;
 }
 
-/* ============ 侧边栏 ============ */
+/* ============ 侧栏 ============
+ *
+ * 结构对齐 Cindy：
+ *   46px 顶栏 → 导航行 → 会话列表 → 底部用户卡
+ *
+ * 三个视觉要点（也是和之前最大的差别）：
+ *   1. 选中态是**整行深色胶囊**，不是浅灰底
+ *   2. 底部是**圆角卡片**，不是一行裸文字
+ *   3. 不做竖线分隔，靠留白分区
+ */
+.shell {
+  display: grid;
+  grid-template-columns: 268px 1fr;
+  height: 100vh;
+  height: 100dvh;
+  transition: grid-template-columns 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.shell:has(.sidebar.is-collapsed) {
+  grid-template-columns: 52px 1fr;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell { transition: none; }
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-3);
-  border-right: 1px solid var(--border);
+  padding: 0 var(--space-2) var(--space-2);
   background: var(--surface);
   min-height: 0;
+  min-width: 0;
 }
 
-.sidebar-head {
+/* 顶栏：46px。Cindy 注释里写明是为了让红绿灯中心 y=23 同轴。
+   这里不放品牌字——品牌在底部用户卡里，顶栏只放工具。 */
+.chrome {
+  height: 46px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 6px;
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 导航行 */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+.nav-row {
+  font: inherit;
+  font-size: var(--text-14);
+  height: 34px;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-}
-.brand {
-  font-weight: var(--font-semibold);
-  font-size: var(--text-15);
-  letter-spacing: -0.01em;
-}
-
-.btn-new {
-  font: inherit;
-  font-size: var(--text-13);
-  font-weight: var(--font-medium);
-  padding: var(--space-2) var(--space-3);
+  border: 0;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
+  background: transparent;
   color: var(--text-primary);
   cursor: pointer;
+  text-align: left;
   transition: background var(--motion-fast) var(--ease-out);
 }
-.btn-new:hover { background: var(--surface-hover); }
+.nav-row:hover {
+  background: var(--surface-hover);
+}
+/* 选中：整行深色胶囊。accent-cta-bg 是 Cindy 的 rgb(60 63 67) —— 
+   不是纯黑，是有灰度的深色，和纯黑文字区分得开。 */
+.nav-row.active {
+  background: var(--accent-cta-bg);
+  color: var(--text-primary-inv);
+}
+.nav-ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  opacity: 0.82;
+}
+.nav-count {
+  margin-left: auto;
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+}
+.nav-row.active .nav-count {
+  color: rgb(255 255 255 / 0.62);
+}
+/* 面板开关的「已打开」：浅底 + 强调文字，不抢「当前位置」的深色胶囊 */
+.nav-row.is-open {
+  background: var(--surface-chip);
+  color: var(--text-primary);
+  font-weight: var(--font-medium);
+}
+
+/* 分区标题 */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-2) 6px;
+  font-size: var(--text-12);
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+.link-btn {
+  font: inherit;
+  font-size: var(--text-12);
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+.link-btn:hover {
+  color: var(--text-primary);
+}
 
 .session-list {
   flex: 1;
@@ -90,9 +192,10 @@
 
 .session-item {
   font: inherit;
-  font-size: var(--text-14);
+  font-size: var(--text-13);
   text-align: left;
-  padding: var(--space-2) var(--space-3);
+  height: 32px;
+  padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
@@ -100,10 +203,16 @@
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out);
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.session-item:hover { background: var(--surface-hover); color: var(--text-primary); }
+.session-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
 .session-item.active {
-  background: var(--surface-active);
+  background: var(--surface-chip);
   color: var(--text-primary);
   font-weight: var(--font-medium);
 }
@@ -114,14 +223,111 @@
   white-space: nowrap;
 }
 
-.sidebar-foot {
+/* 底部用户卡：Cindy 的圆角卡片 */
+.usercard {
+  font: inherit;
+  flex: 0 0 auto;
+  margin-top: var(--space-2);
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-3);
+  gap: 9px;
+  padding: var(--space-2) 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated-soft);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion-fast) var(--ease-out);
 }
+.usercard:hover {
+  background: var(--surface-hover-soft);
+}
+.usercard-avatar {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-md);
+  background: var(--accent-cta-bg);
+  color: var(--text-primary-inv);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-12);
+  font-weight: var(--font-semibold);
+}
+.usercard-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.usercard-name {
+  font-size: var(--text-13);
+  font-weight: var(--font-medium);
+}
+.usercard-sub {
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+}
+.usercard-theme {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.usercard-theme:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 折叠态：只剩图标列 */
+.sidebar.is-collapsed {
+  padding-left: 4px;
+  padding-right: 4px;
+  align-items: center;
+}
+.sidebar.is-collapsed .chrome {
+  padding-left: 0;
+  justify-content: center;
+  width: 100%;
+}
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  align-items: center;
+}
+.rail-icon {
+  display: inline-flex;
+}
+.rail .icon-btn.on {
+  background: var(--accent-cta-bg);
+  color: var(--text-primary-inv);
+}
+.rail-spacer {
+  flex: 1;
+}
+.rail-avatar {
+  width: 26px;
+  height: 26px;
+  margin-bottom: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-cta-bg);
+  color: var(--text-primary-inv);
+  font-size: var(--text-12);
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+}
+
 .model {
   font-size: var(--text-11);
   color: var(--text-tertiary);

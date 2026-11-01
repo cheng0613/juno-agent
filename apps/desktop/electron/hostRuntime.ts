@@ -689,7 +689,7 @@ export class HostRuntime {
             [LOCAL_AGENT_CLIENT]: {
               url: this.orcaTools!.url,
               token: pendingToken,
-              hostToolsOnly: true,
+              hostToolsOnly: false,
               mcpName: 'orca',
             },
           }
@@ -774,7 +774,7 @@ export class HostRuntime {
             [LOCAL_AGENT_CLIENT]: {
               url: this.orcaTools!.url,
               token: resumeToken,
-              hostToolsOnly: true,
+              hostToolsOnly: false,
               mcpName: 'orca',
             },
           }

@@ -2387,7 +2387,8 @@ export async function runRestartTest(win: BrowserWindow, runtime: HostRuntime): 
 
     // 打开设置抽屉并保存
     await win.webContents.executeJavaScript(
-      `(() => { const b = [...document.querySelectorAll('.sidebar-foot .ghost')].find(x => x.textContent.includes('设置')); if (b) b.click(); return 'ok'; })()`,
+      // 侧栏底部改成了用户卡，点它就打开设置抽屉
+      `(() => { const b = document.querySelector('[data-testid="usercard"]'); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(700);
     const drawerOpen = await win.webContents.executeJavaScript(
@@ -2748,11 +2749,11 @@ export async function runSessionOrgTest(win: BrowserWindow, runtime: HostRuntime
     // 通过 UI 建会话（点侧栏「+ 新会话」），这样 React 的列表也会更新。
     // 直接调 runtime.createSession 的话界面不知道，后面验不了会话项。
     await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('.btn-new'); if (b) b.click(); return 'ok'; })()`,
+      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(900);
     await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('.btn-new'); if (b) b.click(); return 'ok'; })()`,
+      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(900);
 
@@ -2815,7 +2816,7 @@ export async function runSessionOrgTest(win: BrowserWindow, runtime: HostRuntime
     );
     // 让 React 重拉列表：切一次会话
     await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('.btn-new'); if (b) b.click(); return 'ok'; })()`,
+      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (b) b.click(); return 'ok'; })()`,
     );
     await delay(900);
 
@@ -3245,7 +3246,7 @@ export async function runEventRoutingTest(win: BrowserWindow, runtime: HostRunti
     // 走 UI 建会话：直接调 IPC 的话 React 的 sessions 列表不更新，
     // 后面按侧栏项切换会找不到元素（踩过）
     const clicked = await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('.btn-new'); if (!b) return 'no-btn'; b.click(); return 'ok'; })()`,
+      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (!b) return 'no-btn'; b.click(); return 'ok'; })()`,
     );
     note(`点新建会话: ${clicked}`);
     await delay(1500);
@@ -3383,7 +3384,7 @@ export async function runLiveViewTest(win: BrowserWindow, runtime: HostRuntime):
     await delay(2500);
     // 走 UI 建会话，保证侧栏有两项可点
     await win.webContents.executeJavaScript(
-      `(() => { document.querySelector('.btn-new')?.click(); return 'ok'; })()`,
+      `(() => { document.querySelector('[data-testid="nav-new"]')?.click(); return 'ok'; })()`,
     );
     await delay(1200);
     const sessions = await runtime.listSessions();
@@ -3805,7 +3806,7 @@ export async function runOrcaUiTest(win: BrowserWindow, runtime: HostRuntime): P
 
     /* ---- 2b. worker 不能出现在左侧主列表里 ---- */
     const sidebarTitles = await js(
-      `[...document.querySelectorAll('.session-list [data-session-id]')]
+      `[...document.querySelectorAll('[data-testid="session-list"] [data-session-id]')]
          .map(el => el.textContent?.trim() ?? '')`,
     );
     note(`侧栏条目: ${JSON.stringify(sidebarTitles)}`);
