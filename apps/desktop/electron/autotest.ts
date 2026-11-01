@@ -4113,9 +4113,7 @@ export async function runToolProbe(win: BrowserWindow, runtime: HostRuntime): Pr
     const leadId = await runtime.ensureSession();
     await runtime.send(
       leadId,
-      '调用 cindy_mcp_call_tool 工具，参数是 {"server":"orca","tool":"create_worker","args":{"role":"developer"}}。' +
-        '注意：cindy_mcp_call_tool 是一个独立工具，不要把 server 和 tool 拼成工具名。' +
-        '调用后把完整返回值原样告诉我。',
+      '把你现在能调用的工具名字全部列出来，一行一个，只列名字不要解释。',
     );
     for (let i = 0; i < 30; i += 1) {
       await delay(2000);
