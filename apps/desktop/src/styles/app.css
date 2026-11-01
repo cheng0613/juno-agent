@@ -501,13 +501,19 @@
   overflow-wrap: anywhere;
 }
 
+/* 行内 code：**字号跟正文一样**，只换字体和底色。
+ *
+ * 之前用 13px（正文 15px），中英混排时 code 比周围小一圈，
+ * 眼睛扫过去会「跳」。Cindy 用 text-14 配 text-15 正文。
+ *
+ * 圆角 6px / 内距 0.2em 0.4em 是 GitHub 的数值，Cindy 也是这么抄的。 */
 .bubble-ai code,
 .bubble-user code {
   font-family: var(--font-mono);
-  font-size: var(--text-13);
+  font-size: var(--text-14);
   background: var(--surface-chip);
-  padding: 0.1em 0.35em;
-  border-radius: var(--radius-xs);
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
 }
 .bubble-user code {
   background: rgb(255 255 255 / 16%);
@@ -2369,36 +2375,52 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   margin-bottom: 0;
 }
 
+/* 标题刻度照搬 Cindy 的 MarkdownRenderer：
+ *   h1 text-20 / leading-1.4
+ *   h2 text-18 / leading-1.556
+ *   h3 text-16 / leading-1.5
+ *
+ * 两个关键决定：
+ *   1. **font-medium（500）而不是 semibold（600）**
+ *      中文字体大多没有真 600 字形，浏览器会合成加粗 —— 笔画糊在一起、
+ *      边缘发虚。这是「看着不舒服」最便宜也最有效的一处修正。
+ *   2. 行高比正文紧一点，但没紧到 1.35 —— 中文标题里也有标点和数字，
+ *      1.4 上下才不挤。 */
 .md-h {
-  margin: 1.1em 0 0.5em;
-  font-weight: var(--font-semibold);
-  line-height: 1.35;
+  margin: 1.3em 0 0.6em;
+  font-weight: var(--font-medium);
   color: var(--text-primary);
 }
 .md-h:first-child {
   margin-top: 0;
 }
 .md-h1 {
-  font-size: var(--text-18);
+  font-size: var(--text-20);
+  line-height: 1.4;
 }
 .md-h2 {
-  font-size: var(--text-16);
+  font-size: var(--text-18);
+  line-height: 1.556;
 }
 .md-h3 {
-  font-size: var(--text-15);
+  font-size: var(--text-16);
+  line-height: 1.5;
 }
 .md-h4 {
-  font-size: var(--text-14);
+  font-size: var(--text-15);
+  line-height: 1.5;
 }
 
 .md-ul,
 .md-ol {
   margin: 0 0 0.6em;
-  padding-left: 1.4em;
+  /* 24px 缩进（Cindy 的 ml-6）—— 中文项目符号和字之间要留得开一些 */
+  padding-left: 1.6em;
 }
 .md-ul li,
 .md-ol li {
-  margin: 0.2em 0;
+  /* 项之间 4px（Cindy 的 space-y-1）：列表一长，挤在一起很难扫 */
+  margin: 4px 0;
 }
 
 .md-quote {

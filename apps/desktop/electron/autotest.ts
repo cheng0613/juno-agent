@@ -1060,6 +1060,22 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     );
     note(`会话 ${sessionId}`);
 
+    /*
+     * 等 React 的 activeId 就位 —— 权限按钮的 disabled={!activeId} 依赖它。
+     * bootstrap() 只读数据，不设置 React state；界面加载是异步的。
+     * 之前直接点会拿到 disabled，看着像「按钮坏了」，其实是还没就绪。
+     */
+    let ready = false;
+    for (let i = 0; i < 40; i += 1) {
+      ready = await win.webContents.executeJavaScript(
+        `(() => { const b = document.querySelector('.mode-btn'); return !!b && !b.disabled; })()`,
+      );
+      if (ready) break;
+      await delay(250);
+    }
+    note(`权限按钮就绪: ${ready}`);
+    if (!ready) throw new Error('权限按钮一直不可用，界面可能没加载完');
+
     /* ---- 1. 打开菜单，选全放行，应进入二次确认 ---- */
     note(`打开菜单: ${await click('.mode-btn')}`);
     await delay(400);
@@ -1716,15 +1732,27 @@ export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     }
   };
 
+  /**
+   * 填字 + 点发送。
+   *
+   * 为什么点按钮而不是合成 Enter：合成 keydown 在 React 受控组件上不可靠 ——
+   * onChange 有时不触发，input state 还是空的，send() 被 `!input.trim()` 拦掉。
+   * 表现是「文字填进去了但没发出去」，很难查。
+   */
   const typeAndSend = (text: string) => `
-    (() => {
+    (async () => {
       const ta = document.querySelector('textarea');
       if (!ta) return 'no-textarea';
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
       setter.call(ta, ${JSON.stringify(text)});
       ta.dispatchEvent(new Event('input', { bubbles: true }));
-      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      return 'ok';
+      // 等 React 把 value 同步进 state，发送按钮才会从 disabled 变可点
+      for (let i = 0; i < 25; i += 1) {
+        const b = document.querySelector('[data-testid="send"]');
+        if (b && !b.disabled) { b.click(); return 'ok'; }
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      return 'send-disabled';
     })()`;
 
   const countNodes = (roots: Array<{ children: unknown[] }>): number => {
@@ -2022,15 +2050,24 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     }
   };
 
+  /** 填字 + 点发送。
+   *
+   * 点按钮而不是合成 Enter：合成 keydown 在 React 受控组件上不可靠，
+   * onChange 有时不触发，input state 为空 → send() 被拦掉，
+   * 表现是「文字填进去了但没发出去」。 */
   const typeAndSend = (text: string) => `
-    (() => {
+    (async () => {
       const ta = document.querySelector('textarea');
       if (!ta) return 'no-textarea';
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
       setter.call(ta, ${JSON.stringify(text)});
       ta.dispatchEvent(new Event('input', { bubbles: true }));
-      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      return 'ok';
+      for (let i = 0; i < 25; i += 1) {
+        const b = document.querySelector('[data-testid="send"]');
+        if (b && !b.disabled) { b.click(); return 'ok'; }
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      return 'send-disabled';
     })()`;
 
   try {
@@ -2053,8 +2090,50 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     ).catch(() => undefined);
     note(`已初始化仓库，target.txt = ORIGINAL`);
 
+    /*
+     * 等 React 的 activeId 就位。
+     * 之前直接 typeAndSend：宿主有会话了但 React 的 activeId 还是 null，
+     * send() 第一行就是 `if (!activeId) return`，消息静默丢掉。
+     * 表现是「点了发送但什么都没发生」，不报任何错。
+     */
+    /*
+     * 走 UI 建会话：bootstrap 期间侧栏可能是空的（宿主有会话但 React 没拿到），
+     * 这时 activeId 为 null，send() 第一行直接 return，消息静默丢掉。
+     * 点一次「新建」让 React 自己建立当前会话，比等它自己好更可靠。
+     */
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="nav-new"]')?.click()`,
+    );
+    await delay(2000);
+    const uiState0 = await win.webContents.executeJavaScript(
+      `(() => ({
+         cards: document.querySelectorAll('[data-testid="session-card"]').length,
+         sendDisabled: document.querySelector('[data-testid="send"]')?.disabled,
+       }))()`,
+    );
+    note('界面状态: ' + JSON.stringify(uiState0));
+    if (uiState0.cards === 0) throw new Error('侧栏没有会话卡片');
+    // 用 UI 建出来的那个会话 —— sessionId（ensureSession 拿的）可能不是同一个，
+    // 后面 sessionTree(sessionId) 就会查到一棵空树。
+    const uiSessionId: string = await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="session-card"]')?.closest('[data-session-id]')?.dataset.sessionId ?? ''`,
+    );
+    note('UI 会话: ' + uiSessionId.slice(0, 8));
+    if (!uiSessionId) throw new Error('拿不到 UI 会话 id');
+    // 输入框空时发送按钮本来就该禁用，不判它
+    const uiState = await win.webContents.executeJavaScript(
+      `(() => ({
+         title: document.querySelector('.topbar-title')?.textContent ?? '(无)',
+         cards: document.querySelectorAll('[data-testid="session-card"]').length,
+         sendDisabled: document.querySelector('[data-testid="send"]')?.disabled,
+         taDisabled: document.querySelector('textarea')?.disabled,
+       }))()`,
+    );
+    note('界面状态: ' + JSON.stringify(uiState));
+
     // 第一轮：只是问个问题，不改文件（这一轮会产生基线快照）
-    await win.webContents.executeJavaScript(typeAndSend('只回答「好」，不要做任何事'));
+    const r1 = await win.webContents.executeJavaScript(typeAndSend('只回答「好」，不要做任何事'));
+    note('第一轮发送结果: ' + r1);
     await waitFor(() => turnsDone >= 1, 180_000, '第一轮');
     await delay(800);
 
@@ -2073,7 +2152,7 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     }
 
     // 打开分支面板，回退到第二轮之前（最后一个 user 节点的 turnIndex）
-    const tree = await runtime.sessionTree(sessionId);
+    const tree = await runtime.sessionTree(uiSessionId);
     const userNodes: Array<{ id: string; turnIndex?: number; preview: string }> = [];
     const walk = (list: Array<{ id: string; role?: string; turnIndex?: number; preview: string; children: unknown[] }>) => {
       for (const node of list) {
@@ -2087,7 +2166,7 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     const second = userNodes.find((n) => n.turnIndex === 1);
     if (!second) throw new Error(`找不到第二轮节点，实际: ${JSON.stringify(userNodes)}`);
 
-    const result = await runtime.navigateTree(sessionId, second.id, second.turnIndex);
+    const result = await runtime.navigateTree(uiSessionId, second.id, second.turnIndex);
     note(`回退结果: filesRestored=${result.filesRestored} / ${result.filesRestoreReason ?? '无原因'}`);
     await delay(800);
 
@@ -2182,6 +2261,26 @@ export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): P
     await delay(2200);
     await runtime.ensureSession();
 
+    /*
+     * 等界面把会话挂上（activeRef 就位）再操作输入框。
+     * 不等的话：宿主有会话了，但 React 的 activeRef 还是 null，
+     * 状态行事件会被「后台会话不上屏」那道判断拦掉，永远抓不到。
+     */
+    let mounted = false;
+    for (let i = 0; i < 40; i += 1) {
+      mounted = await win.webContents.executeJavaScript(
+        `(() => {
+           const ta = document.querySelector('textarea');
+           return !!ta && !ta.disabled && ta.placeholder.includes('问点什么');
+         })()`,
+      );
+      if (mounted) break;
+      await delay(250);
+    }
+    note(`输入框就绪: ${mounted}`);
+    if (!mounted) throw new Error('输入框没就绪');
+
+    /* 发一条带 bash 的，抓状态行 */
     // 让它跑几条命令，中间有足够的窗口抓状态行
     await win.webContents.executeJavaScript(`
       (() => {
@@ -2189,10 +2288,21 @@ export async function runStatusTest(win: BrowserWindow, runtime: HostRuntime): P
         const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
         setter.call(ta, '用 bash 依次执行：sleep 2、sleep 2、sleep 2，每条之间用 echo 报告，最后总结');
         ta.dispatchEvent(new Event('input', { bubbles: true }));
-        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         return 'ok';
       })()
     `);
+    // 等 React 把 value 同步进 state（发送按钮的 disabled 依赖它）
+    for (let i = 0; i < 20; i += 1) {
+      const enabled = await win.webContents.executeJavaScript(
+        `(() => { const b = document.querySelector('[data-testid="send"]'); return !!b && !b.disabled; })()`,
+      );
+      if (enabled) break;
+      await delay(200);
+    }
+    // 点按钮而不是合成 Enter：合成 keydown 在 React 受控组件上不可靠
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="send"]')?.click()`,
+    );
     note('已发送耗时任务');
 
     // 抓状态行：轮询直到出现
