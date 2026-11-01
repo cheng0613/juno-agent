@@ -2244,3 +2244,247 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================
+ * 输入框底部工具条（对齐 Cindy）
+ *
+ * 左边：[+] [⚠ 完全访问 ▾]
+ * 右边：[模型 ▾] [发送]
+ * 低频功能（分支/目录/导出/压缩/计划）收进 [+]。
+ * ============================================================ */
+
+.plus-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.plus-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.plus-btn:hover,
+.plus-btn.open {
+  background: var(--surface-chip);
+  color: var(--text-primary);
+}
+
+.plus-menu {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  padding: 5px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.14);
+}
+.plus-item {
+  font: inherit;
+  font-size: var(--text-13);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.plus-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.plus-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.plus-item.active {
+  background: var(--surface-chip);
+}
+.plus-item-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+.plus-item-label {
+  flex: 1 1 auto;
+}
+.plus-item-hint {
+  flex: 0 0 auto;
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+}
+
+/* 权限档位按钮：图标 + 短标签 + carets */
+.mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mode-btn-icon {
+  display: inline-flex;
+  opacity: 0.85;
+}
+.mode-btn-caret {
+  font-size: 9px;
+  opacity: 0.55;
+}
+
+/* 权限菜单项：图标 + 标签 + 对勾，说明放 title 里 */
+.mode-item-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  opacity: 0.8;
+}
+.mode-item-check {
+  margin-left: auto;
+  color: var(--warning-text, #b7791f);
+  flex: 0 0 auto;
+}
+
+/* ============================================================
+ * Markdown 块级样式
+ *
+ * 只覆盖模型常用的几种：标题 / 列表 / 引用 / 表格 / 分割线。
+ * 表格是最缺的 —— 之前完全没渲染，模型输出 `| a | b |` 就是一堆竖线。
+ * ============================================================ */
+
+.md-p {
+  margin: 0 0 0.6em;
+}
+.md-p:last-child {
+  margin-bottom: 0;
+}
+
+.md-h {
+  margin: 1.1em 0 0.5em;
+  font-weight: var(--font-semibold);
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.md-h:first-child {
+  margin-top: 0;
+}
+.md-h1 {
+  font-size: var(--text-18);
+}
+.md-h2 {
+  font-size: var(--text-16);
+}
+.md-h3 {
+  font-size: var(--text-15);
+}
+.md-h4 {
+  font-size: var(--text-14);
+}
+
+.md-ul,
+.md-ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.4em;
+}
+.md-ul li,
+.md-ol li {
+  margin: 0.2em 0;
+}
+
+.md-quote {
+  margin: 0 0 0.6em;
+  padding: 2px 0 2px 11px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.md-hr {
+  margin: 1.1em 0;
+  border: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+/* 表格：横向可滚（列多时不撑破气泡） */
+.md-table-wrap {
+  margin: 0 0 0.7em;
+  overflow-x: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--text-13);
+}
+.md-table th,
+.md-table td {
+  padding: 7px 11px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-default);
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--surface-elevated-soft);
+  font-weight: var(--font-medium);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.md-table tr:last-child td {
+  border-bottom: 0;
+}
+
+/* 状态行：星形 + 橙色，表达「AI 在干活」 */
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 8px;
+  font-size: var(--text-12);
+  color: var(--accent-warm, #d97706);
+}
+.status-spark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  animation: spark-breathe 2.4s ease-in-out infinite;
+}
+@keyframes spark-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-spark { animation: none; }
+}
+.status-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-medium);
+}
+.status-spacer {
+  flex: 1 1 auto;
+}
+.status-meta {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+/* 卡住时用警示色，和「正常干活」区分开 */
+.status-line.is-stalled {
+  color: var(--danger, #c0392b);
+}
+
+/* 用户消息原样显示：保留换行和空白，不解析 Markdown */
+.user-raw {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -37,22 +37,27 @@ export function StatusLine({ status }: { status: TurnStatus | null }) {
   return (
     <div
       data-testid="status-line"
-      className="flex items-center gap-2 px-2 pb-2 text-12 text-text-secondary"
+      className={`status-line${stalled ? ' is-stalled' : ''}`}
     >
-      <span
-        className={`status-spinner${stalled ? ' status-spinner-stalled' : ''}`}
-      />
-      <span data-testid="status-label" className="min-w-0 flex-[0_1_auto] truncate">
+      {/* 星形图标 + 橙色：表达「AI 在干活」，不是一个中性的加载中。
+          不用转圈：转圈会让人盯着看，而这件事可能要跑几分钟。 */}
+      <span className="status-spark" aria-hidden>
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 1.6l1.2 3.4 3.4 1.2-3.4 1.2L8 10.8 6.8 7.4 3.4 6.2l3.4-1.2z" />
+          <path d="M12.6 10.2l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z" opacity=".7" />
+        </svg>
+      </span>
+      <span data-testid="status-label" className="status-label">
         {stalled ? `已经 ${formatIdle(idleMs)}没有任何响应` : `${status.label}…`}
       </span>
-      <span className="flex-1" />
-      <span
-        data-testid="status-meta"
-        className={`shrink-0 tabular-nums ${stalled ? 'text-[var(--warning)]' : 'text-text-tertiary'}`}
-      >
-        {formatDuration(Date.now() - status.startedAt)}
-        {status.tokens != null && status.tokens > 0 ? ` · ${formatTokens(status.tokens)} tokens` : ''}
-      </span>
+      <span className="status-spacer" />
+      {/* 不显示已跑多久 —— 秒数只会让人焦虑（「怎么还没好」），
+          尤其跑到 30s、60s 的时候。卡住时才提示时长。 */}
+      {status.tokens != null && status.tokens > 0 && (
+        <span data-testid="status-meta" className="status-meta">
+          {formatTokens(status.tokens)} tokens
+        </span>
+      )}
     </div>
   );
 }

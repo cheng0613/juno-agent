@@ -4,6 +4,7 @@ import { Chat } from './Chat';
 import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
+import { PlusMenu, PLUS_ICONS } from './PlusMenu';
 import { ArchivedPanel } from './ArchivedPanel';
 import { Sidebar } from './Sidebar';
 import { SettingsPanel } from './SettingsPanel';
@@ -189,6 +190,15 @@ export function App() {
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   /** 本轮改动；null = 没有任何改动 */
   const [turnDiff, setTurnDiff] = useState<TurnDiffPayload | null>(null);
+  /**
+   * 忽略这个时间点之前启动的 turn_diff 事件。
+   *
+   * 背景：diff 是异步算的（轮结束后宿主要跑 git diff，要几百毫秒）。
+   * 用户回退时我们清空了 turnDiff，但那时上一轮的计算可能还在跑，
+   * 算完才推过来 —— 结果回退后界面上又出现了「已回滚的改动」。
+   * 所以回退时记下时间，早于它的 diff 一律丢掉。
+   */
+  const ignoreDiffBeforeRef = useRef(0);
   /** 面板是否展开；关掉后面板不丢，顶栏还能再打开 */
   const [diffOpen, setDiffOpen] = useState(false);
   const [modes, setModes] = useState<ModeState>({
@@ -471,6 +481,9 @@ export function App() {
         }
 
         case 'turn_diff': {
+          // 回退后到达的旧 diff 直接丢：它的内容已经被回滚掉了，
+          // 再显示会让人以为「改还没来得及退」
+          if (Date.now() < ignoreDiffBeforeRef.current) return;
           // 只在有改动时弹面板；没改动不打扰人
           if (event.changes.length > 0) {
             setTurnDiff({
@@ -650,6 +663,8 @@ export function App() {
         // 文件已经恢复到那一剂，还显示「+1 -1」会让人以为改还没来得及退
         setTurnDiff(null);
         setDiffOpen(false);
+        // 丢掉之前启动、回退后才算完的 diff（异步计算有延迟）
+        ignoreDiffBeforeRef.current = Date.now() + 2000;
         setTasks([]);
         // 文件是否也回滚了，必须告诉用户 —— 他很可能以为「退回去=撤销了」
         if (result.filesRestored) {
@@ -1274,6 +1289,73 @@ export function App() {
               左边：能力类（权限/思考/模型）；右边：发送类。
             */}
             <div className="composer-bar">
+              {/* 左边：低频功能收进「+」，高频的权限档位常驻 */}
+              <PlusMenu
+                items={[
+                  {
+                    id: 'plan',
+                    label: '计划模式',
+                    icon: PLUS_ICONS.plan,
+                    active: modes.planMode,
+                    hint: modes.planMode ? '已开' : undefined,
+                    disabled: !activeId,
+                    onClick: () => void togglePlanMode(!modes.planMode),
+                  },
+                  {
+                    id: 'branch',
+                    label: '对话分支',
+                    icon: PLUS_ICONS.branch,
+                    disabled: !activeId,
+                    onClick: () => {
+                      const next = !treeOpen;
+                      setTreeOpen(next);
+                      if (next && activeId) {
+                        void host.sessionTree(activeId).then(setTree).catch(() => setTree([]));
+                      }
+                    },
+                  },
+                  {
+                    id: 'dirs',
+                    label: '额外目录',
+                    icon: PLUS_ICONS.folder,
+                    hint:
+                      extraDirs.read.length + extraDirs.write.length > 0
+                        ? `${extraDirs.read.length + extraDirs.write.length} 项`
+                        : undefined,
+                    disabled: !activeId,
+                    onClick: () => {
+                      const next = !dirsOpen;
+                      setDirsOpen(next);
+                      if (next && activeId) void host.readExtraDirs(activeId).then(setExtraDirs);
+                    },
+                  },
+                  {
+                    id: 'diff',
+                    label: '本轮改动',
+                    icon: PLUS_ICONS.export,
+                    hint: turnDiff ? String(turnDiff.changes.length) : undefined,
+                    disabled: !turnDiff,
+                    onClick: () => setDiffOpen(true),
+                  },
+                  {
+                    id: 'export',
+                    label: '导出对话',
+                    icon: PLUS_ICONS.export,
+                    disabled: !activeId || messages.length === 0 || exporting,
+                    hint: exporting ? '导出中…' : undefined,
+                    onClick: () => void exportHtml(),
+                  },
+                  {
+                    id: 'compact',
+                    label: '压缩上下文',
+                    icon: PLUS_ICONS.compact,
+                    disabled: !activeId || running || compacting || messages.length === 0,
+                    hint: compacting ? '压缩中…' : undefined,
+                    onClick: () => void compactNow(),
+                  },
+                ]}
+              />
+
               <ModeControls
                 modes={modes}
                 disabled={!activeId}
@@ -1282,6 +1364,8 @@ export function App() {
                 onEffort={(effort) => void changeEffort(effort)}
               />
 
+              <span className="bar-spacer" />
+
               {models.length > 1 && (
                 <select
                   className="model-select bar-select"
@@ -1289,6 +1373,7 @@ export function App() {
                   disabled={running}
                   title="切换模型（当前会话）"
                   onChange={(e) => void switchModelTo(e.target.value)}
+                  data-testid="model-select"
                 >
                   {models.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -1297,63 +1382,6 @@ export function App() {
                   ))}
                 </select>
               )}
-
-              {turnDiff && (
-                <button
-                  className="ghost bar-action"
-                  title="展开本轮文件改动"
-                  onClick={() => setDiffOpen(true)}
-                >
-                  改动 {turnDiff.changes.length}
-                </button>
-              )}
-              <button
-                className="ghost bar-action"
-                disabled={!activeId}
-                title="回到之前某一轮重新提问"
-                onClick={() => {
-                  const next = !treeOpen;
-                  setTreeOpen(next);
-                  if (next && activeId) {
-                    void host.sessionTree(activeId).then(setTree).catch(() => setTree([]));
-                  }
-                }}
-              >
-                分支
-              </button>
-              <button
-                className="ghost bar-action"
-                disabled={!activeId}
-                title="让它也能访问别的目录"
-                onClick={() => {
-                  const next = !dirsOpen;
-                  setDirsOpen(next);
-                  if (next && activeId) void host.readExtraDirs(activeId).then(setExtraDirs);
-                }}
-              >
-                目录
-                {extraDirs.read.length + extraDirs.write.length > 0
-                  ? ` ${extraDirs.read.length + extraDirs.write.length}`
-                  : ''}
-              </button>
-              <button
-                className="ghost bar-action"
-                disabled={!activeId || messages.length === 0 || exporting}
-                title="把这段对话导出成一个 HTML 文件"
-                onClick={() => void exportHtml()}
-              >
-                {exporting ? '导出中…' : '导出'}
-              </button>
-              <button
-                className="ghost bar-action"
-                disabled={!activeId || running || compacting || messages.length === 0}
-                title="把较早的对话换成一页摘要，腾出上下文空间"
-                onClick={() => void compactNow()}
-              >
-                {compacting ? '压缩中…' : '压缩'}
-              </button>
-
-              <span className="bar-spacer" />
 
               {running ? (
                 <>
@@ -1365,13 +1393,24 @@ export function App() {
                   >
                     排队
                   </button>
-                  <button className="send stop" onClick={() => void host.cancel(activeId ?? '')}>
+                  <button
+                    className="send stop"
+                    onClick={() => void host.cancel(activeId ?? '')}
+                    data-testid="send-stop"
+                    aria-label="停止"
+                  >
                     <span className="square" />
                   </button>
                 </>
               ) : (
-                <button className="send" disabled={!input.trim() && pendingImages.length === 0} onClick={() => void send()}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <button
+                  className="send"
+                  disabled={!input.trim() && pendingImages.length === 0}
+                  onClick={() => void send()}
+                  data-testid="send"
+                  aria-label="发送"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 19V5M5 12l7-7 7 7" />
                   </svg>
                 </button>

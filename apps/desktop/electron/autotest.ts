@@ -1070,11 +1070,11 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     await shootTo(win, '20-permission-menu');
     note('截图 20-permission-menu');
 
-    // 点「全放行」那一项
+    // 点「完全访问」（原「全放行」）。用 data-testid 而不是找文字 ——
+    // 文案会改（这次就从「全放行」改成了「完全访问」），testid 不会。
     const clickedDanger = await win.webContents.executeJavaScript(
       `(() => {
-         const items = [...document.querySelectorAll('.mode-item')];
-         const target = items.find(i => i.innerText.includes('全放行'));
+         const target = document.querySelector('[data-testid="mode-perm-bypassPermissions"]');
          if (!target) return 'missing';
          target.click();
          return 'ok';
@@ -1760,8 +1760,13 @@ export async function runTreeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     if (beforeCount < 2) throw new Error('树里节点太少，对话没被记录');
 
     // 打开面板
+    // 「分支」已收进输入框左下角的加号菜单里
     await win.webContents.executeJavaScript(
-      `(() => { const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
+      `document.querySelector('[data-testid="plus-menu-trigger"]')?.click()`,
+    );
+    await delay(400);
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="plus-branch"]')?.click()`,
     );
     await delay(900);
     const rows = await win.webContents.executeJavaScript(
@@ -2089,12 +2094,15 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
     const afterRewind = await fs.readFile(target, 'utf8').catch(() => '<文件已不存在>');
     note(`回退后 target.txt = ${JSON.stringify(afterRewind)}`);
 
-    // 上面走的是 runtime API，React state 不会动。
-    // 这里额外走一遍 UI 路径，确认面板会跟着清掉、对话区会重建。
+    // 「分支」已收进输入框左下角的加号菜单
     await win.webContents.executeJavaScript(
-      `(() => { const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('分支')); if (b) b.click(); return 'ok'; })()`,
+      `document.querySelector('[data-testid="plus-menu-trigger"]')?.click()`,
     );
-    await delay(900);
+    await delay(400);
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="plus-branch"]')?.click()`,
+    );
+    await delay(1200);
     const clickedReplay = await win.webContents.executeJavaScript(
       `(() => {
          const all = [...document.querySelectorAll('[data-testid="tree-replay"]')];
@@ -3400,8 +3408,13 @@ export async function runLiveViewTest(win: BrowserWindow, runtime: HostRuntime):
     await win.webContents.executeJavaScript(
       `(() => { document.querySelector('[data-testid="nav-new"]')?.click(); return 'ok'; })()`,
     );
-    await delay(1200);
-    const sessions = await runtime.listSessions();
+    // 建会话要启动 pi 子进程（约 900ms）再等 React 更新，1200ms 不够稳。
+    // 轮询等第二个会话出现，最多 15 秒。
+    let sessions = await runtime.listSessions();
+    for (let i = 0; i < 30 && sessions.length < 2; i += 1) {
+      await delay(500);
+      sessions = await runtime.listSessions();
+    }
     if (sessions.length < 2) throw new Error(`需要两个会话，实际 ${sessions.length}`);
     const a = sessions[1]!.id;
     const b = sessions[0]!.id;
@@ -4275,6 +4288,62 @@ export async function runCodeBlockTest(win: BrowserWindow, runtime: HostRuntime)
   } catch (e) {
     note('失败: ' + String(e));
     await shootTo(win, '99-codeblock-failed').catch(() => undefined);
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}
+
+
+/** 验收：Markdown 块级渲染（表格 / 标题 / 列表） */
+export async function runMarkdownTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (s: string) => console.log('[autotest/md] ' + s);
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+  try {
+    await delay(2200);
+    const leadId = await runtime.ensureSession();
+    await runtime.send(
+      leadId,
+      [
+        '用 Markdown 回答，严格按下面格式，不要加别的解释：',
+        '',
+        '## 标题一',
+        '',
+        '- 列表项 A',
+        '- 列表项 B',
+        '',
+        '| 名称 | 状态 |',
+        '| --- | --- |',
+        '| 甲 | 完成 |',
+        '| 乙 | 进行中 |',
+      ].join('\n')
+    );
+
+    let ok = false;
+    for (let i = 0; i < 30; i += 1) {
+      await delay(1500);
+      const r = await js(
+        `(() => ({
+           table: !!document.querySelector('[data-testid="md-table"]'),
+           rows: document.querySelectorAll('[data-testid="md-table"] tbody tr').length,
+           h: !!document.querySelector('.md-h'),
+           ul: document.querySelectorAll('.md-ul li').length,
+         }))()`,
+      );
+      if (r.table) {
+        ok = true;
+        note(`表格行数=${r.rows} 标题=${r.h} 列表项=${r.ul}`);
+        if (r.rows < 2) throw new Error('表格行数不对');
+        if (!r.h) throw new Error('标题没渲染');
+        break;
+      }
+    }
+    if (!ok) throw new Error('没有渲染出表格');
+    await shootTo(win, '69-markdown');
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-md-failed').catch(() => undefined);
   } finally {
     await delay(300);
     app.quit();

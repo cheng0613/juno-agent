@@ -95,16 +95,189 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
  *
  * 分割用正则捕获组：split 后奇数下标就是围栏内容。
  */
+/**
+ * 块级 Markdown：标题 / 列表 / 引用 / 分割线 / 表格。
+ *
+ * 为什么不做完整的 Markdown 解析器：引 remark/marked 会带进上百 KB，
+ * 而且我们要的只是「模型常见的几种块」——它们占了实际输出的 95%。
+ * 遇到不认的行就当普通段落，不会崩。
+ */
+function MarkdownBlocks({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+
+  const pushPara = (buf: string[]) => {
+    if (buf.length === 0) return;
+    out.push(
+      <p key={`p${key++}`} className="md-p">
+        <Inline text={buf.join('\n')} />
+      </p>,
+    );
+  };
+
+  let para: string[] = [];
+
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+
+    // 空行：断开段落
+    if (line.trim() === '') {
+      pushPara(para);
+      para = [];
+      i += 1;
+      continue;
+    }
+
+    // 分割线
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+      pushPara(para);
+      para = [];
+      out.push(<hr key={`hr${key++}`} className="md-hr" />);
+      i += 1;
+      continue;
+    }
+
+    // 标题 ###
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (h) {
+      pushPara(para);
+      para = [];
+      const level = Math.min(h[1]!.length + 2, 6); // # → h3（h1/h2 留给页面）
+      const Tag = `h${level}` as 'h3';
+      out.push(
+        <Tag key={`h${key++}`} className={`md-h md-h${h[1]!.length}`}>
+          <Inline text={h[2] ?? ''} />
+        </Tag>,
+      );
+      i += 1;
+      continue;
+    }
+
+    // 表格：当前行有 |，下一行是 |---|
+    if (line.includes('|') && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] ?? '')) {
+      pushPara(para);
+      para = [];
+      const split = (row: string) =>
+        row
+          .replace(/^\s*\|/, '')
+          .replace(/\|\s*$/, '')
+          .split('|')
+          .map((c) => c.trim());
+      const head = split(line);
+      i += 2; // 跳过分隔行
+      const rows: string[][] = [];
+      while (i < lines.length && (lines[i] ?? '').includes('|') && (lines[i] ?? '').trim() !== '') {
+        rows.push(split(lines[i]!));
+        i += 1;
+      }
+      out.push(
+        <div key={`tbl${key++}`} className="md-table-wrap">
+          <table className="md-table" data-testid="md-table">
+            <thead>
+              <tr>
+                {head.map((c, j) => (
+                  <th key={j}>
+                    <Inline text={c} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr key={ri}>
+                  {head.map((_, ci) => (
+                    <td key={ci}>
+                      <Inline text={r[ci] ?? ''} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      continue;
+    }
+
+    // 无序列表
+    if (/^\s*[-*+]\s+/.test(line)) {
+      pushPara(para);
+      para = [];
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i] ?? '')) {
+        items.push((lines[i] ?? '').replace(/^\s*[-*+]\s+/, ''));
+        i += 1;
+      }
+      out.push(
+        <ul key={`ul${key++}`} className="md-ul">
+          {items.map((it, j) => (
+            <li key={j}>
+              <Inline text={it} />
+            </li>
+          ))}
+        </ul>,
+      );
+      continue;
+    }
+
+    // 有序列表
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      pushPara(para);
+      para = [];
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i] ?? '')) {
+        items.push((lines[i] ?? '').replace(/^\s*\d+[.)]\s+/, ''));
+        i += 1;
+      }
+      out.push(
+        <ol key={`ol${key++}`} className="md-ol">
+          {items.map((it, j) => (
+            <li key={j}>
+              <Inline text={it} />
+            </li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
+
+    // 引用
+    if (/^\s*>\s?/.test(line)) {
+      pushPara(para);
+      para = [];
+      const items: string[] = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i] ?? '')) {
+        items.push((lines[i] ?? '').replace(/^\s*>\s?/, ''));
+        i += 1;
+      }
+      out.push(
+        <blockquote key={`bq${key++}`} className="md-quote">
+          <Inline text={items.join('\n')} />
+        </blockquote>,
+      );
+      continue;
+    }
+
+    para.push(line);
+    i += 1;
+  }
+  pushPara(para);
+
+  return <>{out}</>;
+}
+
 function RichText({ text }: { text: string }) {
   // ```lang\n内容\n``` —— lang 可省略
   const parts = text.split(/```(\w*)\n?([\s\S]*?)```/g);
-  if (parts.length === 1) return <Inline text={text} />;
+  if (parts.length === 1) return <MarkdownBlocks text={text} />;
 
   const nodes: React.ReactNode[] = [];
   // split 带两个捕获组时，每段是 [文本, lang, code, 文本, lang, code, ...]
   for (let i = 0; i < parts.length; i += 3) {
     const before = parts[i];
-    if (before) nodes.push(<Inline key={`t${i}`} text={before} />);
+    if (before) nodes.push(<MarkdownBlocks key={`t${i}`} text={before} />);
     const lang = parts[i + 1] ?? '';
     const code = parts[i + 2];
     if (typeof code === 'string') {
@@ -143,7 +316,10 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
               ))}
             </div>
           )}
-          {msg.text ? <RichText text={msg.text} /> : null}
+          {/* 用户消息原样显示，**不解析 Markdown** ——
+              用户写什么就该看到什么。把用户写的「## 标题」渲染成真标题，
+              等于替他改了内容。 */}
+          {msg.text ? <span className="user-raw">{msg.text}</span> : null}
         </div>
       </div>
     );

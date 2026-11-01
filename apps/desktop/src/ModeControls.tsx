@@ -17,21 +17,46 @@ export const PERMISSION_MODES: Array<{
 }> = [
   {
     id: 'ask',
-    label: '每次询问',
-    hint: '只读工具直接跑；改文件、执行命令、调 MCP 都先问你',
+    label: '默认权限',
+    hint: '只读工具直接执行；写文件、跑命令和 MCP 工具每次都询问。',
   },
   {
     id: 'auto',
-    label: '自动放行工作区内',
-    hint: '工作区内写文件和常用安全命令不再问；区外写入和危险命令仍会问',
+    label: '自动审批',
+    hint: '工作区内写文件和常用安全命令不再问；区外写入和危险命令仍会问。',
   },
   {
     id: 'bypassPermissions',
-    label: '全放行',
-    hint: '任何文件都能改、任何命令都能跑，不再确认。只在你完全信任任务时用',
+    label: '完全访问',
+    hint: '任何文件都能改、任何命令都能跑，不再确认。只在你完全信任任务时用。',
     dangerous: true,
   },
 ];
+
+/** 权限档位的图标。手代表「要问你」，星星代表「自动」，警告代表风险。 */
+export function permissionIcon(id: PermissionModeChoice, size = 14) {
+  const p = { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
+  if (id === 'ask') {
+    return (
+      <svg {...p}>
+        <path d="M5.2 7.4V4.2a1.2 1.2 0 0 1 2.4 0v2.6M7.6 6.2V3.4a1.2 1.2 0 0 1 2.4 0v3M10 6.6V4.6a1.2 1.2 0 0 1 2.4 0v4.6c0 2.4-1.8 4.2-4.2 4.2S4 11.6 4 9.2V7.6a1.1 1.1 0 0 1 2.2 0v1.2" />
+      </svg>
+    );
+  }
+  if (id === 'auto') {
+    return (
+      <svg {...p}>
+        <path d="M8 1.8l1.5 3.9 3.9.3-3 2.6 1 4.1L8 10.5l-3.4 2.2 1-4.1-3-2.6 3.9-.3z" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...p}>
+      <path d="M8 2.2L14.4 13H1.6z" />
+      <path d="M8 6.4v2.8M8 11.2v.2" />
+    </svg>
+  );
+}
 
 export function modeLabel(mode: PermissionModeChoice): string {
   return PERMISSION_MODES.find((m) => m.id === mode)?.label ?? mode;
@@ -116,8 +141,11 @@ export function ModeControls({
           setOpen((v) => !v);
           setConfirming(false);
         }}
+        data-testid="permission-trigger"
       >
+        <span className="mode-btn-icon">{permissionIcon(modes.permissionMode)}</span>
         {current?.label ?? modes.permissionMode}
+        <span className="mode-btn-caret">▾</span>
       </button>
 
       <button
@@ -199,9 +227,14 @@ export function ModeControls({
                   mode.dangerous ? ' dangerous' : ''
                 }`}
                 onClick={() => pick(mode.id)}
+                title={mode.hint}
+                data-testid={`mode-perm-${mode.id}`}
               >
+                <span className="mode-item-icon">{permissionIcon(mode.id)}</span>
                 <span className="mode-item-label">{mode.label}</span>
-                <span className="mode-item-hint">{mode.hint}</span>
+                {mode.id === modes.permissionMode && (
+                  <span className="mode-item-check">✓</span>
+                )}
               </button>
             ))
           )}
