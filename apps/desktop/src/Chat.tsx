@@ -287,6 +287,96 @@ function RichText({ text }: { text: string }) {
   return <>{nodes}</>;
 }
 
+/**
+ * 错误卡片。
+ *
+ * 直接甩原始错误（`401 Unauthorized … signature verification failed …
+ * 127.0.0.1:57889`）等于把排查工作丢给用户：
+ * 那个 127.0.0.1 是 pi 内部的 loopback 代理，用户会以为是我们坏了。
+ *
+ * 所以分三层：
+ *   1. 人话标题（发生了什么）
+ *   2. 提示（为什么 + 该做什么）+ 可选的动作按钮
+ *   3. 可折叠的原始错误（排查时才展开）
+ */
+function ErrorCard({ msg }: { msg: UiMessage }) {
+  const d = msg.diagnosis;
+  const raw = d?.raw || msg.text || '';
+
+  if (!d) {
+    // 旧数据（诊断层之前存的消息）没有 diagnosis —— 退回原样显示
+    return (
+      <div className="bubble-error">
+        <span className="badge err">错误</span>
+        <span>{raw}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="err-card" data-testid="error-card" role="alert">
+      <div className="err-card-head">
+        <span className="err-card-icon" aria-hidden>
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <circle cx="8" cy="8" r="6.3" />
+            <path d="M8 4.8v3.6M8 11.2v.2" />
+          </svg>
+        </span>
+        <span className="err-card-title" data-testid="error-title">
+          {d.title}
+        </span>
+      </div>
+
+      {d.hint && <p className="err-card-hint">{d.hint}</p>}
+
+      {d.action && (
+        <div className="err-card-actions">
+          {d.action === 'open-settings' && (
+            <button
+              type="button"
+              className="err-card-btn primary"
+              data-testid="error-action-settings"
+              onClick={() => {
+                // 渲染层通过自定义事件告诉 App 打开设置；Chat 拿不到 App 的 state
+                window.dispatchEvent(new CustomEvent('juno:open-settings'));
+              }}
+            >
+              打开设置
+            </button>
+          )}
+          {d.action === 'check-network' && (
+            <button
+              type="button"
+              className="err-card-btn primary"
+              data-testid="error-action-settings"
+              onClick={() => window.dispatchEvent(new CustomEvent('juno:open-settings'))}
+            >
+              检查接口地址
+            </button>
+          )}
+          {d.action === 'restart-app' && (
+            <button
+              type="button"
+              className="err-card-btn primary"
+              data-testid="error-action-restart"
+              onClick={() => window.dispatchEvent(new CustomEvent('juno:restart-app'))}
+            >
+              重启应用
+            </button>
+          )}
+        </div>
+      )}
+
+      {raw && (
+        <details className="err-card-raw">
+          <summary>技术细节</summary>
+          <pre>{raw}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
   if (msg.role === 'tool_use' || msg.role === 'tool_result') {
     return <ToolCard msg={msg} ok={ok} />;
@@ -326,12 +416,7 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
   }
 
   if (msg.role === 'error') {
-    return (
-      <div className="bubble-error">
-        <span className="badge err">错误</span>
-        <span>{msg.text}</span>
-      </div>
-    );
+    return <ErrorCard msg={msg} />;
   }
 
   if (msg.role === 'thinking') {

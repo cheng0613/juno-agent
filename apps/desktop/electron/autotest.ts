@@ -4459,3 +4459,62 @@ export async function runMarkdownTest(win: BrowserWindow, runtime: HostRuntime):
     app.quit();
   }
 }
+
+
+/**
+ * 验收：错误诊断卡片。
+ *
+ * 故意用坏 key 触发 401，看界面是不是给出人话而不是原始错误。
+ */
+export async function runErrorDiagnosisTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (s: string) => console.log('[autotest/errdiag] ' + s);
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+  try {
+    await delay(2200);
+    // 等界面就绪
+    for (let i = 0; i < 40; i += 1) {
+      const ok = await js(`!!document.querySelector('[data-testid="send"]')`);
+      if (ok) break;
+      await delay(250);
+    }
+
+    // 直接走 IPC 发一条，但把 key 弄坏 —— 用宿主侧注入错误事件更可控
+    const leadId = await runtime.ensureSession();
+    await runtime.debugEmitError(
+      leadId,
+      '401 Unauthorized: The API Key does not exist or signature verification failed. ' +
+        'Please check whether the API Key is correct. ' +
+        'See: https://console.cloud.tencent.com/tokenhub/apikey, url: http://127.0.0.1:57889/responses',
+    );
+    await delay(1200);
+
+    const card = await js(
+      `(() => {
+         const el = document.querySelector('[data-testid="error-card"]');
+         if (!el) return null;
+         return {
+           title: el.querySelector('[data-testid="error-title"]')?.textContent?.trim() ?? '',
+           hasAction: !!el.querySelector('[data-testid="error-action-settings"]'),
+           hasRaw: !!el.querySelector('.err-card-raw'),
+           full: el.textContent ?? '',
+         };
+       })()`,
+    );
+    note('错误卡片: ' + JSON.stringify({ t: card?.title, action: card?.hasAction, raw: card?.hasRaw }));
+    if (!card) throw new Error('没有渲染出错误卡片');
+    if (!card.title.includes('API Key')) throw new Error('标题没有翻译成人话: ' + card.title);
+    if (!card.hasAction) throw new Error('缺少「打开设置」按钮');
+    // 关键：正文里不该出现 loopback 地址（那是我们的内部细节）
+    if (card.full.includes('127.0.0.1')) {
+      throw new Error('界面上暴露了 loopback 地址，用户会以为是我们坏了');
+    }
+    await shootTo(win, '70-error-diagnosis');
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-errdiag-failed').catch(() => undefined);
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}

@@ -2601,3 +2601,95 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   color: var(--text-disabled);
   font-style: italic;
 }
+
+/* ============================================================
+ * 错误卡片
+ *
+ * 三层：人话标题 → 提示 + 动作 → 可折叠的技术细节。
+ * 用暖色警示而不是纯红：纯红像「系统崩了」，实际大多数错误
+ * 是配置问题，用户能自己修。
+ * ============================================================ */
+
+.err-card {
+  border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 28%, transparent);
+  background: color-mix(in srgb, var(--danger, #c0392b) 5%, transparent);
+  border-radius: var(--radius-lg);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.err-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.err-card-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--danger, #c0392b);
+}
+.err-card-title {
+  font-size: var(--text-14);
+  font-weight: var(--font-medium);
+  color: var(--text-primary);
+}
+
+.err-card-hint {
+  margin: 0;
+  font-size: var(--text-13);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.err-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.err-card-btn {
+  font: inherit;
+  font-size: var(--text-12);
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.err-card-btn:hover {
+  background: var(--surface-hover);
+}
+.err-card-btn.primary {
+  border-color: transparent;
+  background: var(--accent-cta-bg);
+  color: var(--text-primary-inv);
+}
+.err-card-btn.primary:hover {
+  opacity: 0.88;
+}
+
+/* 技术细节：默认收起。排查时才看，平时不占视线 */
+.err-card-raw {
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+}
+.err-card-raw summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-tertiary);
+}
+.err-card-raw pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+}

@@ -161,6 +161,13 @@ export interface UiMessage {
   compact?: { trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null };
   /** 用户消息带的图（data URI，主进程已读好） */
   images?: string[];
+  /** error 专用：诊断结果（人话 + 下一步） */
+  diagnosis?: {
+    title: string;
+    hint?: string;
+    action?: 'open-settings' | 'restart-app' | 'check-network';
+    raw: string;
+  };
 }
 
 export interface SessionSummary {
@@ -378,7 +385,24 @@ export type HostEvent =
    * 「哪个面板该刷新」，不用反查 worker 属于谁。
    */
   | { type: 'workers'; leadSessionId: string; workers: UiWorker[] }
-  | { type: 'error'; sessionId?: string; message: string };
+  | {
+      type: 'error';
+      sessionId?: string;
+      message: string;
+      /**
+       * 诊断后的错误（人话 + 下一步）。
+       *
+       * 原始 message 保留，但界面上优先显示诊断结果 ——
+       * 「401 … signature verification failed … 127.0.0.1:57889」这种，
+       * 用户看了不知道干什么。
+       */
+      diagnosis?: {
+        title: string;
+        hint?: string;
+        action?: 'open-settings' | 'restart-app' | 'check-network';
+        raw: string;
+      };
+    };
 
 /** 手动压缩的结果 —— noop 表示上下文太小，不是错误 */
 export interface CompactResult {

@@ -518,7 +518,12 @@ export function App() {
         case 'error': {
           setMessages((prev) => [
             ...prev,
-            { id: `err-${prev.length}-${Date.now()}`, role: 'error', text: event.message },
+            {
+              id: `err-${prev.length}-${Date.now()}`,
+              role: 'error',
+              text: event.message,
+              ...(event.diagnosis ? { diagnosis: event.diagnosis } : {}),
+            },
           ]);
           return;
         }
@@ -526,6 +531,25 @@ export function App() {
     });
 
     return off;
+  }, [host]);
+
+  /*
+   * 错误卡片上的动作按钮。
+   *
+   * Chat 组件拿不到 App 的 state（打开设置、重启），所以走自定义事件。
+   * 比把一堆回调层层传下去干净。
+   */
+  useEffect(() => {
+    const openSettings = () => setSettingsMode('drawer');
+    const restartApp = () => {
+      void host.restartApp();
+    };
+    window.addEventListener('juno:open-settings', openSettings);
+    window.addEventListener('juno:restart-app', restartApp);
+    return () => {
+      window.removeEventListener('juno:open-settings', openSettings);
+      window.removeEventListener('juno:restart-app', restartApp);
+    };
   }, [host]);
 
   /* ---------------- 自动滚动 ---------------- */

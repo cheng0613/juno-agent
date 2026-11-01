@@ -52,6 +52,7 @@ import type {
   TreeEntry,
   UiMessage,
 } from '../src/shared/ipc.js';
+import { diagnoseError } from '../src/shared/errorDiagnosis.js';
 
 import {
   collectTurnDiff,
@@ -1156,7 +1157,9 @@ export class HostRuntime {
       }
       case 'error': {
         const d = event.data as Record<string, unknown>;
-        this.emit({ type: 'error', sessionId, message: String(d?.message ?? 'unknown error') });
+        const message = String(d?.message ?? 'unknown error');
+        // 带上诊断：界面直接显示人话，原始错误折叠放里面
+        this.emit({ type: 'error', sessionId, message, diagnosis: diagnoseError(message) });
         return;
       }
       case 'compact_boundary': {
@@ -2163,6 +2166,11 @@ export class HostRuntime {
       .prepare('SELECT working_dir FROM orca_workers WHERE id = ?')
       .get(workerId) as { working_dir: string | null } | undefined;
     return row?.working_dir ?? null;
+  }
+
+  /** 验收用：直接推一条错误事件（模拟上游报错，不用真的打坏 key） */
+  debugEmitError(sessionId: string, message: string): void {
+    this.emit({ type: 'error', sessionId, message, diagnosis: diagnoseError(message) });
   }
 
   /** 验收用：ORCA 工具服务器的 URL；null 表示没起来 */
