@@ -134,8 +134,12 @@
 /* 选中：整行深色胶囊。accent-cta-bg 是 Cindy 的 rgb(60 63 67) —— 
    不是纯黑，是有灰度的深色，和纯黑文字区分得开。 */
 .nav-row.active {
-  background: var(--accent-cta-bg);
-  color: var(--text-primary-inv);
+  /* 浅灰胶囊，不是深黑。
+   * accent-cta-bg 是**主按钮**的颜色，拿来当「当前在哪」太抢眼：
+   * 整列白字黑底，视线被挠住。Cindy 侧栏选中只比背景深一点点。 */
+  background: var(--surface-chip-alt);
+  color: var(--text-primary);
+  font-weight: var(--font-medium);
 }
 .nav-ico {
   flex: 0 0 auto;
@@ -148,7 +152,7 @@
   color: var(--text-tertiary);
 }
 .nav-row.active .nav-count {
-  color: rgb(255 255 255 / 0.62);
+  color: var(--text-tertiary);
 }
 /* 面板开关的「已打开」：浅底 + 强调文字，不抢「当前位置」的深色胶囊 */
 .nav-row.is-open {
@@ -347,7 +351,10 @@
   min-height: 0;
   /* notice 用 absolute 浮层定位，需要这里是定位上下文 */
   position: relative;
-  background: var(--bg);
+  /* 主区用**白底**，不是 surface。
+     层次关系：侧栏灰（surface）→ 主区白（surface-elevated）。
+     全屏都用 surface 的话整页一个颜色，内容浮不起来 —— 这是「看起来怪」的主因。 */
+  background: var(--surface-elevated);
 }
 
 /* 内容列：除了协同面板之外的一切。
@@ -571,9 +578,12 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
+  /* 边框要能看出边界：主区是白底，8% 黑的边框在白上几乎看不见，
+     整块工具卡片就像一块脏斑。用 surface-chip 当底 + 稍深的边框，
+     才能读成「一张卡片」而不是「一块阴影」。 */
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: var(--surface-chip);
+  background: var(--surface-elevated-soft);
   font-size: var(--text-13);
   min-width: 0;
 }
@@ -650,11 +660,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-  box-shadow: var(--shadow-xs);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
   transition: border-color var(--motion-fast) var(--ease-out);
   /* 控件多时必须能收缩，否则会撑破容器 */
   min-width: 0;
@@ -954,12 +964,15 @@
 .queue-x:hover { color: var(--text-primary); }
 
 /* 顶部窄条：只放会话名和「压缩上下文」，别占太多竖向空间 */
+/* 顶栏 46px：和侧栏顶行等高，两栏文字基线才对得上。
+   不做下边框 —— Cindy 那边顶行和内容是一整块连续表面，
+   一条灰线横切过去会把内容区切成两段。 */
 .topbar {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-5);
-  border-bottom: 1px solid var(--border);
+  height: 46px;
+  padding: 0 var(--space-5);
   flex: 0 0 auto;
 }
 .topbar-title {
