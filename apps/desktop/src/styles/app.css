@@ -1753,3 +1753,39 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   background: var(--danger, #c0392b);
   color: #fff;
 }
+
+/* 围栏代码块。
+ * 不做语法高亮（要引 shiki，包体积和启动都变重），
+ * 先保证「一眼看出这是代码」：等宽、底色、长行横滚不换行变形。 */
+.code-block {
+  position: relative;
+  margin: var(--space-2) 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-chip);
+  overflow: hidden;
+}
+.code-block pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+  line-height: 1.6;
+}
+.code-block code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+/* 语言标签：放右上角，不占正文空间 */
+.code-lang {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  pointer-events: none;
+  user-select: none;
+}

@@ -70,6 +70,50 @@ function Inline({ text }: { text: string }) {
   );
 }
 
+/**
+ * 围栏代码块渲染。
+ *
+ * 之前只做了行内 `code`，不支持 ``` 包裹的多行代码 ——
+ * 模型输出代码块时会原样显示那三个反引号，很难看。
+ *
+ * 不做语法高亮：要引 shiki/highlight.js，包体积和启动时间都变重。
+ * 先保证「代码看起来是代码」（等宽字体 + 底色 + 横向滚动）。
+ */
+function CodeBlock({ code, lang }: { code: string; lang: string }) {
+  return (
+    <div className="code-block" data-testid="code-block">
+      {lang && <span className="code-lang">{lang}</span>}
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * 富文本：先按 ``` 切出代码块，剩下的交给行内渲染。
+ *
+ * 分割用正则捕获组：split 后奇数下标就是围栏内容。
+ */
+function RichText({ text }: { text: string }) {
+  // ```lang\n内容\n``` —— lang 可省略
+  const parts = text.split(/```(\w*)\n?([\s\S]*?)```/g);
+  if (parts.length === 1) return <Inline text={text} />;
+
+  const nodes: React.ReactNode[] = [];
+  // split 带两个捕获组时，每段是 [文本, lang, code, 文本, lang, code, ...]
+  for (let i = 0; i < parts.length; i += 3) {
+    const before = parts[i];
+    if (before) nodes.push(<Inline key={`t${i}`} text={before} />);
+    const lang = parts[i + 1] ?? '';
+    const code = parts[i + 2];
+    if (typeof code === 'string') {
+      nodes.push(<CodeBlock key={`c${i}`} code={code.replace(/\n$/, '')} lang={lang} />);
+    }
+  }
+  return <>{nodes}</>;
+}
+
 export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
   if (msg.role === 'tool_use' || msg.role === 'tool_result') {
     return <ToolCard msg={msg} ok={ok} />;
@@ -82,7 +126,7 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
       <div className="row-steer">
         <span className="steer-badge">插话</span>
         <div className="bubble-steer">
-          <Inline text={msg.text ?? ''} />
+          <RichText text={msg.text ?? ''} />
         </div>
       </div>
     );
@@ -99,7 +143,7 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
               ))}
             </div>
           )}
-          {msg.text ? <Inline text={msg.text} /> : null}
+          {msg.text ? <RichText text={msg.text} /> : null}
         </div>
       </div>
     );
@@ -142,7 +186,7 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
 
   return (
     <div className={`bubble-ai${msg.streaming ? ' streaming' : ''}`}>
-      <Inline text={msg.text ?? ''} />
+      <RichText text={msg.text ?? ''} />
     </div>
   );
 }
@@ -185,7 +229,7 @@ export function Chat({
 
       {liveText && (
         <div className="bubble-ai streaming">
-          <Inline text={liveText} />
+          <RichText text={liveText} />
         </div>
       )}
 

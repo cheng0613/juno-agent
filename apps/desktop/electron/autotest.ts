@@ -4138,3 +4138,58 @@ export async function runToolProbe(win: BrowserWindow, runtime: HostRuntime): Pr
     app.quit();
   }
 }
+
+
+/**
+ * 验收：围栏代码块渲染。
+ *
+ * 之前不支持 ``` 块，模型输出代码时会原样显示三个反引号。
+ * 现在要确认：<pre> 出现了、语言标签显示了、反引号没了。
+ */
+export async function runCodeBlockTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (s: string) => console.log('[autotest/codeblock] ' + s);
+  try {
+    await delay(2200);
+    const leadId = await runtime.ensureSession();
+    await runtime.send(
+      leadId,
+      '用python代码块回答：打印 hello。只输出代码块，不要解释。用三个反引号包裹并标注 python。',
+    );
+
+    let hasBlock = false;
+    let text = '';
+    for (let i = 0; i < 30; i += 1) {
+      await delay(1500);
+      const r = await win.webContents.executeJavaScript(
+        `(() => {
+           const pre = document.querySelector('[data-testid="code-block"] pre');
+           const lang = document.querySelector('[data-testid="code-block"] .code-lang');
+           const body = document.querySelector('.chat')?.textContent ?? '';
+           return { hasPre: !!pre, code: pre?.textContent ?? '', lang: lang?.textContent ?? '', hasTicks: body.includes(String.fromCharCode(96).repeat(3)) };
+         })()`,
+      );
+      if (r.hasPre && r.code.trim()) {
+        hasBlock = true;
+        note(`代码块: lang="${r.lang}" code="${r.code.trim().slice(0, 60)}"`);
+        note(`页面上还有反引号吗: ${r.hasTicks}`);
+        if (r.hasTicks) throw new Error('代码块渲染了，但页面上仍能看到三个反引号');
+        // 用户气泡必须在：代码块对了但气泡没了，等于把用户的话吞了
+        const hasUserBubble = await win.webContents.executeJavaScript(
+          `!!document.querySelector('.bubble-user')`,
+        );
+        note('用户气泡存在: ' + hasUserBubble);
+        if (!hasUserBubble) throw new Error('代码块渲染了，但用户消息气泡不见了');
+        break;
+      }
+    }
+    if (!hasBlock) throw new Error('没有渲染出代码块');
+    await shootTo(win, '68-codeblock');
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-codeblock-failed').catch(() => undefined);
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}
