@@ -142,12 +142,14 @@ export async function runAutotest(win: BrowserWindow, runtime: HostRuntime): Pro
 
     // ---- 6. 切深色主题，验证 tokens 反色 ----
     await win.webContents.executeJavaScript(
-      `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '深色')?.click()`,
+      // 主题切换现在在底部用户卡里，是个图标按钮（不再是文字按钮）
+      `document.querySelector('[data-testid="theme-toggle"]')?.click()`,
     );
-    await delay(700);
+    await delay(800);
     await shot('04-dark');
+    // 切回浅色，后面的截图都基于浅色
     await win.webContents.executeJavaScript(
-      `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '浅色')?.click()`,
+      `document.querySelector('[data-testid="theme-toggle"]')?.click()`,
     );
 
     // ---- 7. 流式逐字验证（纯文本，不调工具，抓中间帧）----
