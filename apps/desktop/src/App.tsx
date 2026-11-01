@@ -97,6 +97,14 @@ export function App() {
   /* ---- ORCA 协作 ---- */
   /** 当前 Lead 的 worker 列表（由宿主投影推送，不自己推导） */
   const [workers, setWorkers] = useState<UiWorker[]>([]);
+  /**
+   * 跨会话的 worker 总览：leadSessionId → workers。
+   *
+   * 为什么要单独存一份：workers 只记当前 Lead 的，切走就丢，
+   * 于是「另一个会话里的 worker 还在跑」这件事在界面上完全看不出来。
+   * 多会话并行时这恰恰是最需要知道的。
+   */
+  const [workersByLead, setWorkersByLead] = useState<Record<string, UiWorker[]>>({});
   /** 面板里选中的 worker */
   const [activeWorkerId, setActiveWorkerId] = useState<string | null>(null);
   /** 是否展开右侧面板 */
@@ -429,7 +437,10 @@ export function App() {
         }
 
         case 'workers': {
-          // 只关心当前 Lead 的 worker —— 后台 Lead 的推送不该覆盖当前面板
+          // 总览无条件存：后台 Lead 的 worker 也要能看见
+          setWorkersByLead((prev) => ({ ...prev, [event.leadSessionId]: event.workers }));
+
+          // 面板只跟当前 Lead —— 后台 Lead 的推送不该覆盖当前面板
           if (event.leadSessionId !== activeRef.current) return;
           setWorkers(event.workers);
           setWorkerBusy(
@@ -1097,6 +1108,8 @@ export function App() {
         onToggleOrca={() => void (orcaOpen ? setOrcaOpen(false) : openOrca())}
         orcaOpen={orcaOpen}
         workerCount={workers.length}
+        workerRunning={workers.filter((w) => w.status === 'running').length}
+        workersByLead={workersByLead}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
       />

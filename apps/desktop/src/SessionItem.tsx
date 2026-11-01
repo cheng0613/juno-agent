@@ -17,6 +17,7 @@ export function SessionItem({
   session,
   active,
   busy,
+  workersRunning = 0,
   onSelect,
   onRename,
   onPin,
@@ -27,6 +28,8 @@ export function SessionItem({
   active: boolean;
   /** 这个会话正在跑（可能是后台会话） */
   busy?: boolean;
+  /** 这个会话底下有几个 worker 在跑；切走了也能看到那边在干活 */
+  workersRunning?: number;
   onSelect: () => void;
   onRename: (title: string) => void;
   onPin: (pinned: boolean) => void;
@@ -128,6 +131,15 @@ export function SessionItem({
               )}
               <span className="truncate">{session.title}</span>
             </span>
+            {workersRunning > 0 && (
+              <span
+                className="session-worker-badge"
+                data-testid="session-workers-running"
+                title={`${workersRunning} 个 worker 在跑`}
+              >
+                {workersRunning}
+              </span>
+            )}
           </button>
 
           <div className="relative shrink-0" ref={menuRef}>

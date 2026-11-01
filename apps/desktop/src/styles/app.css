@@ -2207,3 +2207,27 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   white-space: nowrap;
   min-width: 0;
 }
+
+/* 侧栏「协同」行的在跑计数。
+ * 用绿色小字而不是徽标底 —— 它表达「有活在干」，不是「有未读」。 */
+.nav-count.running {
+  color: var(--switch-track-on);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 会话行尾的 worker 徽标：切到别的会话时，
+ * 也能看到「那个会话底下还有 2 个 worker 在跑」。 */
+.session-worker-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--switch-track-on);
+  color: #fff;
+  font-size: var(--text-10);
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

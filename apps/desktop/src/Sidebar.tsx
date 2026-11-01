@@ -11,7 +11,7 @@
 import type { ReactNode } from 'react';
 
 import { SessionItem } from './SessionItem';
-import type { SessionSummary } from './shared/ipc';
+import type { SessionSummary, UiWorker } from './shared/ipc';
 
 /** 侧栏视图。后期加「插件 / 伙伴 / 自动化」就往这里加 */
 export type SidebarView = 'sessions';
@@ -102,6 +102,10 @@ export interface SidebarProps {
   onToggleOrca: () => void;
   orcaOpen: boolean;
   workerCount: number;
+  /** 其中正在跑的；侧栏用「2 跑」而不是总数，一眼看出是否还有活在干 */
+  workerRunning: number;
+  /** 跨会话 worker 总览：leadSessionId → workers */
+  workersByLead: Record<string, UiWorker[]>;
   /** 折叠态（窄屏或用户手动收起） */
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -128,6 +132,8 @@ export function Sidebar(props: SidebarProps) {
     onToggleOrca,
     orcaOpen,
     workerCount,
+    workerRunning,
+    workersByLead,
     collapsed,
     onToggleCollapsed,
   } = props;
@@ -240,7 +246,13 @@ export function Sidebar(props: SidebarProps) {
             </svg>
           </span>
           协同
-          {workerCount > 0 && <span className="nav-count">{workerCount}</span>}
+          {workerRunning > 0 ? (
+            <span className="nav-count running" data-testid="nav-worker-running">
+              {workerRunning} 跑
+            </span>
+          ) : (
+            workerCount > 0 && <span className="nav-count">{workerCount}</span>
+          )}
         </button>
         <button type="button" className="nav-row" data-testid="nav-search">
           <span className="nav-ico">{SEARCH_ICON}</span>
@@ -270,6 +282,7 @@ export function Sidebar(props: SidebarProps) {
             session={s}
             active={s.id === activeId}
             busy={busySessions.has(s.id)}
+            workersRunning={(workersByLead[s.id] ?? []).filter((w) => w.status === 'running').length}
             onSelect={() => onSelect(s.id)}
             onRename={(title) => onRename(s.id, title)}
             onPin={(pinned) => onPin(s.id, pinned)}
