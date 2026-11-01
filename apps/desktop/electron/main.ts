@@ -474,6 +474,13 @@ app.whenReady().then(async () => {
       process.platform === 'win32' ? 'pi.exe' : 'pi',
     );
     process.env.APP_DATA_DIR ??= app.getPath('userData');
+  } else {
+    /*
+     * 开发时也要用**固定**目录。
+     * 之前走 temp 兜底，看起来没问题 —— 但 temp 目录重启就没了，
+     * 开发时对话和配置全都会丢，而且不报错，很容易误以为存了。
+     */
+    process.env.APP_DATA_DIR ??= path.join(app.getPath('userData'), 'dev-data');
   }
 
   // 改名后 userData 目录变了（Spike Agent → Juno）。
@@ -569,7 +576,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest, runOrcaToolsTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest, runOrcaToolsTest, runToolProbe } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -630,6 +637,8 @@ app.whenReady().then(async () => {
                                         ? runOrcaUiTest(win, runtime)
                                       : mode === 'orca-tools'
                                         ? runOrcaToolsTest(win, runtime)
+                                      : mode === 'probe'
+                                        ? runToolProbe(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

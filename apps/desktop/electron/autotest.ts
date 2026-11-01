@@ -4100,3 +4100,38 @@ export async function runOrcaToolsTest(win: BrowserWindow, runtime: HostRuntime)
     app.quit();
   }
 }
+
+
+/** 探测：让模型列出它看到的工具名，确认 MCP 工具在模型侧叫什么 */
+export async function runToolProbe(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (s: string) => console.log('[autotest/probe] ' + s);
+  try {
+    await delay(2500);
+    const leadId = await runtime.ensureSession();
+    await runtime.send(
+      leadId,
+      '调用 cindy_mcp_call_tool 工具，参数是 {"server":"orca","tool":"create_worker","args":{"role":"developer"}}。' +
+        '注意：cindy_mcp_call_tool 是一个独立工具，不要把 server 和 tool 拼成工具名。' +
+        '调用后把完整返回值原样告诉我。',
+    );
+    for (let i = 0; i < 30; i += 1) {
+      await delay(2000);
+      const workers = runtime.listWorkers(leadId);
+      if (workers.length > 0) { note('建出 worker: ' + workers.map(w => w.label).join(',')); break; }
+      if (i % 5 === 0) note('轮询 ' + i + ' workers=' + workers.length);
+    }
+    const rows = runtime.messageRows(leadId);
+    for (const m of rows) {
+      const r = m as { role?: string; toolName?: string; content?: unknown };
+      if (r.role === 'tool_use') note('TOOL_USE ' + r.toolName + ' ' + JSON.stringify(r.content).slice(0, 120));
+      if (r.role === 'tool_result') note('RESULT ' + JSON.stringify(r.content).slice(0, 200));
+      if (r.role === 'assistant') note('ASSISTANT ' + JSON.stringify(r.content).slice(0, 200));
+    }
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}

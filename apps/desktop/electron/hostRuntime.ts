@@ -114,8 +114,10 @@ export interface EnvOverrides {
  * 环境变量优先是为了 CI / 脚本注入不被本地文件覆盖。
  */
 export function configFromEnv(file: EnvOverrides = {}): HostConfig {
+  // 兜底目录只在「不经 Electron 直接跑宿主」时用到（桌面端会先设 APP_DATA_DIR）。
+  // 用固定名字而不是 mkdtemp：临时目录重启就没了，对话会丢。
   const dataDir =
-    process.env.APP_DATA_DIR ?? path.join(os.tmpdir(), 'spike-desktop');
+    process.env.APP_DATA_DIR ?? path.join(os.tmpdir(), 'juno-desktop');
   const pick = (envName: string, fileValue: string | undefined, fallback: string): string =>
     process.env[envName]?.trim() || fileValue?.trim() || fallback;
 

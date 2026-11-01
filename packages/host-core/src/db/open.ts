@@ -46,7 +46,11 @@ export function migrate(db: Db): { from: number; to: number; applied: number[] }
     version: number;
   }>;
   const appliedVersions = new Set(rows.map((r) => r.version));
-  const current = appliedVersions.size ? Math.max(...appliedVersions) : 0;
+  // current 在整个迁移过程中要跟着推进：
+  // 否则一次应用多条（比如空库从 v1 一路到 v8）时，
+  // 第二条就会误报「expected 2, got 3」—— 这是真踩过的。
+  let current = appliedVersions.size ? Math.max(...appliedVersions) : 0;
+  const startVersion = current;
 
   // 迁移必须严格按版本递增，且不允许跳号（防止有人手写 3 却漏了 2）
   const pending = MIGRATIONS.filter((m) => !appliedVersions.has(m.version)).sort(
@@ -54,7 +58,7 @@ export function migrate(db: Db): { from: number; to: number; applied: number[] }
   );
 
   for (const m of pending) {
-    if (m.version !== current + 1 && appliedVersions.size > 0 && m.version > current + 1) {
+    if (appliedVersions.size > 0 && m.version !== current + 1) {
       throw new Error(
         `migration gap: expected version ${current + 1}, got ${m.version} (${m.name})`,
       );
@@ -69,11 +73,13 @@ export function migrate(db: Db): { from: number; to: number; applied: number[] }
       );
     });
     run();
+    current = m.version;
+    appliedVersions.add(m.version);
   }
 
   return {
-    from: current,
-    to: pending.length ? Math.max(...pending.map((m) => m.version)) : current,
+    from: startVersion,
+    to: current,
     applied: pending.map((m) => m.version),
   };
 }
