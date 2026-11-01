@@ -190,7 +190,8 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  /* 卡片之间留 2px：卡片本身有内边距，间距再大就散了 */
+  gap: 2px;
   min-height: 0;
 }
 
@@ -2487,4 +2488,94 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
 .user-raw {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ============================================================
+ * 侧栏会话卡片
+ *
+ * 之前是一行光秃秃的标题 —— 看起来像文件列表，不像任务列表。
+ * 卡片给三样东西：模型标识（扫一眼知道用什么跑的）、标题、摘要 + 时间。
+ * ============================================================ */
+
+.session-card {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.session-card:hover {
+  background: var(--surface-hover);
+}
+/* 选中：比悬停稍深一点点，但仍是浅底 —— 深色块会把整列压暗 */
+.session-card.is-active {
+  background: var(--surface-chip-alt);
+}
+
+.session-card-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.session-pin {
+  flex: 0 0 auto;
+  font-size: var(--text-11);
+}
+/* 模型标：一个字母的方块，比小图标更省空间也更容易扫 */
+.session-model-mark {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--surface-chip);
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 15px;
+  text-align: center;
+  font-weight: var(--font-semibold);
+}
+.session-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-13);
+  color: var(--text-primary);
+}
+.session-card.is-active .session-card-title {
+  font-weight: var(--font-medium);
+}
+.session-card-time {
+  flex: 0 0 auto;
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+/* 摘要：两行截断。有它才能区分两个名字相近的会话 */
+.session-card-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-12);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  padding-left: 20px;
+  word-break: break-word;
+}
+
+/* 空会话/重复摘要：更淡一些，别和真摘要一样重 */
+.session-card-preview.is-empty {
+  color: var(--text-disabled);
+  font-style: italic;
 }

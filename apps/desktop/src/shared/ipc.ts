@@ -177,6 +177,8 @@ export interface SessionSummary {
    * 用户会以为那是自己开的会话。
    */
   orcaRole?: 'lead' | 'worker';
+  /** 最后一条模型回复的摘要（单行，已截断）。给侧栏卡片用 */
+  preview?: string;
 }
 
 /** 已归档的会话 */

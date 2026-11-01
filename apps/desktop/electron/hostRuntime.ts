@@ -163,6 +163,30 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig {
 const logger = createConsoleLogger('host');
 
 /**
+ * 把库里存的 content 转成一行摘要文本。
+ *
+ * content 历史上两种形状：裸字符串 / `{ text }` 对象。两种都兼容。
+ * 压成一行：侧栏卡片只给两行，里面再带换行会撑破高度。
+ */
+function previewOf(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let text = '';
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === 'string') text = parsed;
+    else if (parsed && typeof parsed === 'object') {
+      const t = (parsed as { text?: unknown }).text;
+      if (typeof t === 'string') text = t;
+    }
+  } catch {
+    text = raw;
+  }
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  if (!oneLine) return null;
+  return oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
+}
+
+/**
  * 引擎给的树历史 → UI 消息。
  *
  * 与 main.ts 的 rowToUiMessage 形状保持一致，但输入不同：
@@ -2215,10 +2239,16 @@ export class HostRuntime {
     // 不能只按 updated_at —— 置顶就是为了让它不被新会话挤下去。
     const rows = this.db
       .prepare(
-        `SELECT id, title, model, status, updated_at, pinned_at, orca_role
-           FROM sessions
-          WHERE archived_at IS NULL
-          ORDER BY pinned_at IS NULL, pinned_at DESC, updated_at DESC`,
+        `SELECT s.id, s.title, s.model, s.status, s.updated_at, s.pinned_at, s.orca_role,
+                (SELECT m.content FROM messages m
+                  WHERE m.session_id = s.id AND m.role = 'assistant'
+                  ORDER BY m.rowid DESC LIMIT 1) AS last_assistant,
+                (SELECT m.content FROM messages m
+                  WHERE m.session_id = s.id AND m.role IN ('user','user_steer')
+                  ORDER BY m.rowid DESC LIMIT 1) AS last_user
+           FROM sessions s
+          WHERE s.archived_at IS NULL
+          ORDER BY s.pinned_at IS NULL, s.pinned_at DESC, s.updated_at DESC`
       )
       .all() as Array<{
       id: string;
@@ -2228,16 +2258,23 @@ export class HostRuntime {
       updated_at: number;
       pinned_at: number | null;
       orca_role: string | null;
+      last_assistant: string | null;
+      last_user: string | null;
     }>;
-    return rows.map((r) => ({
-      id: r.id,
-      title: r.title || '未命名',
-      model: r.model,
-      status: r.status,
-      updatedAt: r.updated_at,
-      pinned: r.pinned_at !== null,
-      ...(r.orca_role ? { orcaRole: r.orca_role as 'lead' | 'worker' } : {}),
-    }));
+    return rows.map((r) => {
+      // 优先模型回复；没有就用用户那句（刚建的空会话）
+      const preview = previewOf(r.last_assistant) ?? previewOf(r.last_user);
+      return {
+        id: r.id,
+        title: r.title || '未命名',
+        model: r.model,
+        status: r.status,
+        updatedAt: r.updated_at,
+        pinned: r.pinned_at !== null,
+        ...(r.orca_role ? { orcaRole: r.orca_role as 'lead' | 'worker' } : {}),
+        ...(preview ? { preview } : {}),
+      };
+    });
   }
 
   /** 重命名。空标题不改 —— 避免误操作把名字清成空白 */

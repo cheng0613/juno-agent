@@ -83,6 +83,27 @@ export function SessionItem({
     setConfirmDelete(false);
   };
 
+  /**
+   * 卡片第二行。
+   *
+   * 摘要和标题重复时不显示（标题通常就是从用户第一句切的）——
+   * 那样两行一模一样的字，卡片变成噪声。
+   * 空会话时给一句谈的占位，不重复左上角的模型标。
+   */
+  const isEmpty = !session.preview?.trim();
+  const previewText = (() => {
+    const p = session.preview?.trim();
+    // 左上角已经有模型标了，这里再写一遍模型名是重复的
+    if (!p) return '还没有对话';
+    const normalize = (v: string) => v.replace(/[\s…⋯.。！？!?]+$/g, '').trim();
+    const a = normalize(p);
+    const b = normalize(session.title);
+    if (a === b) return '还没有后续内容';
+    // 标题是摘要的前缀时也算重复（标题就是截短版）
+    if (a.startsWith(b) || b.startsWith(a)) return '还没有后续内容';
+    return p;
+  })();
+
   return (
     <div
       data-testid="session-item"
@@ -113,15 +134,20 @@ export function SessionItem({
       ) : (
         <>
           <button
-            className={`min-w-0 flex-1 overflow-hidden rounded-md px-3 py-2 text-left text-14 ${
-              active ? 'text-text-primary' : 'text-text-secondary group-hover:text-text-primary'
-            }`}
-            title={session.title}
+            className={`session-card${active ? ' is-active' : ''}`}
+            title={session.preview ? `${session.title}
+${session.preview}` : session.title}
             onClick={onSelect}
             onDoubleClick={() => setEditing(true)}
+            data-testid="session-card"
           >
-            <span className="flex items-center gap-1">
-              {session.pinned && <span className="shrink-0 text-11 text-text-tertiary">📌</span>}
+            {/* 第一行：模型标 + 标题 + 时间 */}
+            <span className="session-card-head">
+              {session.pinned && <span className="session-pin" title="已置顶">📌</span>}
+              <span className="session-model-mark" title={session.model}>
+                {(session.model.split('/').pop() ?? '?').charAt(0).toUpperCase()}
+              </span>
+              <span className="session-card-title">{session.title}</span>
               {busy && (
                 <span
                   data-testid="session-busy"
@@ -129,17 +155,22 @@ export function SessionItem({
                   title="这个会话正在跑"
                 />
               )}
-              <span className="truncate">{session.title}</span>
+              {workersRunning > 0 && (
+                <span
+                  className="session-worker-badge"
+                  data-testid="session-workers-running"
+                  title={`${workersRunning} 个 worker 在跑`}
+                >
+                  {workersRunning}
+                </span>
+              )}
+              <span className="session-card-time">{relativeTime(session.updatedAt)}</span>
             </span>
-            {workersRunning > 0 && (
-              <span
-                className="session-worker-badge"
-                data-testid="session-workers-running"
-                title={`${workersRunning} 个 worker 在跑`}
-              >
-                {workersRunning}
-              </span>
-            )}
+
+            {/* 第二行：摘要。没摘要时用模型名占位，卡片高度才一致 */}
+            <span className={`session-card-preview${isEmpty ? ' is-empty' : ''}`}>
+              {previewText}
+            </span>
           </button>
 
           <div className="relative shrink-0" ref={menuRef}>
@@ -223,4 +254,24 @@ export function SessionItem({
       )}
     </div>
   );
+}
+
+/**
+ * 相对时间：侧栏卡片右上的「12 小时」「2 天」。
+ *
+ * 为什么不显示绝对时间：侧栏宽度有限，`2026-11-01 15:30` 太长，
+ * 而且用户真正关心的是「多久前」—— 判断哪个是刚聊完的。
+ */
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min} 分钟`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} 小时`;
+  const day = Math.floor(hour / 24);
+  if (day < 30) return `${day} 天`;
+  const month = Math.floor(day / 30);
+  if (month < 12) return `${month} 个月`;
+  return `${Math.floor(month / 12)} 年`;
 }
