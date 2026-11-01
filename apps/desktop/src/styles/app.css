@@ -350,6 +350,18 @@
   background: var(--bg);
 }
 
+/* 内容列：除了协同面板之外的一切。
+ * 它必须自己成 flex column 且占满高度，否则输入框会失去「贴底」的约束，
+ * 飘到页面中间去（实测踩过）。 */
+.main-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
 .notice {
   /* 浮在输入框上方，不盖住对话内容，也不占布局流 */
   position: absolute;
@@ -1466,9 +1478,23 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
  * 用 :has() 让主对话区自己让位，不必在 React 里传 class。
  * ============================================================ */
 
-.main:has(.orca-panel) > .scroller {
-  padding-right: min(460px, 60%);
-  transition: padding-right var(--motion-base, 200ms) var(--ease-out, ease-out);
+/* 有协同面板时，main 变成横向两列：内容列 | 面板列。
+ *
+ * 这里不能只靠 CSS：main 原本是 flex column，
+ * 直接转 row 会让 topbar/scroller/composer 横着排（实测坏掉）。
+ * 所以 JSX 里把内容包进 .main-col，由它保持竖排。
+ */
+.main:has(.orca-panel) {
+  flex-direction: row;
+}
+.main:has(.orca-panel) > .main-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.main:has(.orca-panel) > .orca-panel {
+  flex: 0 0 auto;
+  /* Cindy 的下限是 280，聊天区下限 400 */
+  width: clamp(280px, 32%, 420px);
 }
 
 .sidebar .btn-orca {
@@ -1497,25 +1523,27 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   opacity: 0.7;
 }
 
+/* 面板是 grid 的第二列，不浮动、不绝对定位。
+   宽 280–420px：Cindy 的下限是 280，聊天区下限 400。 */
 .orca-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(460px, 60%);
   display: flex;
   flex-direction: column;
-  background: var(--surface-elevated, var(--surface));
-  border-left: 1px solid var(--border-subtle, var(--accent));
-  z-index: 5;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-elevated-soft);
+  border-left: 1px solid var(--border-default);
+  overflow: hidden;
 }
 
+/* 顶行 46px：与侧栏顶行、主区 topbar 等高。
+   三栅顶行对齐了，横向扫过去才是平的。 */
 .orca-head {
   flex: 0 0 auto;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: 0 var(--space-3);
 }
 .orca-title {
   font-size: var(--text-13);

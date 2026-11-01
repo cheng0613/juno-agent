@@ -1096,6 +1096,7 @@ export function App() {
 
       {/* ---------------- 主区 ---------------- */}
       <main className="main">
+        <div className="main-col">
         {interrupted.length > 0 && (
           <div className="resume-banner">
             <div className="resume-head">
@@ -1384,6 +1385,8 @@ export function App() {
             onClose={() => setTreeOpen(false)}
           />
         )}
+        </div>
+
         {orcaOpen && (
           <WorkerPanel
             workers={workers}
