@@ -3925,6 +3925,31 @@ export async function runOrcaUiTest(win: BrowserWindow, runtime: HostRuntime): P
     check(before !== after, '隔离切换没生效');
     await shootTo(win, '67-orca-isolation-toggled');
 
+    /* ---- 7b. 工作目录必须可见 ---- */
+    const workerSample = await js(
+      `(() => {
+         const el = document.querySelector('[data-testid="orca-panel"]');
+         return el ? el.textContent?.slice(0, 200) : null;
+       })()`,
+    );
+    note('面板文本: ' + workerSample);
+    const workdir = await js(
+      `(() => {
+         const el = document.querySelector('[data-testid="orca-workdir"]');
+         if (!el) return null;
+         return { text: el.textContent?.trim() ?? '', title: el.getAttribute('title') ?? '' };
+       })()`,
+    );
+    note(`工作目录显示: ${JSON.stringify(workdir)}`);
+    check(!!workdir, '面板里看不到工作目录');
+    check((workdir.title ?? '').length > 0, '工作目录的 title 里没有完整路径');
+    // 压缩后的显示应该带省略号或至少不是整条路径
+    check(
+      (workdir.title ?? '').length >= (workdir.text ?? '').length,
+      '压缩后的文本比原路径还长，压缩没生效',
+    );
+    await shootTo(win, '67b-orca-workdir');
+
     /* ---- 8. 关闭面板 ---- */
     await js(`document.querySelector('[data-testid="orca-toggle"]')?.click()`);
     await delay(500);

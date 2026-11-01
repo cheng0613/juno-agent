@@ -2182,3 +2182,28 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   opacity: 0.45;
   cursor: default;
 }
+
+/* 工作目录行：多个 worker 时最需要知道「它在哪干活」。
+ * 路径用等宽字体 —— 路径里斜杠和相似字符多，非等宽很难扫读。 */
+.orca-workdir {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px var(--space-3);
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-default);
+  min-width: 0;
+}
+.orca-workdir svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+.orca-workdir-path {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

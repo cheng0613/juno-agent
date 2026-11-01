@@ -23,6 +23,21 @@ const STATUS_TEXT: Record<UiWorker['status'], string> = {
   error: '出错',
 };
 
+/**
+ * 把长路径压成能看的样子。
+ *
+ * 工作目录动辄 `C:\Users\x\Desktop\proj\.juno\worktrees\developer`，
+ * 完整显示会撑爆面板。**保留尾部**而不是开头 ——
+ * 识别一个目录靠的是最后几段（worktrees/developer），不是盘符。
+ */
+export function tidyPath(p: string, keep = 3): string {
+  if (!p) return '';
+  // 同时处理 / 和 \（Windows 路径里的 \ 不能直接 split，先统一）
+  const parts = p.split(/[\\/]+/).filter(Boolean);
+  if (parts.length <= keep) return p;
+  return `…/${parts.slice(-keep).join('/')}`;
+}
+
 export interface WorkerPanelProps {
   workers: UiWorker[];
   /** 当前选中的 worker id；null 表示没选 */
@@ -219,6 +234,17 @@ export function WorkerPanel(props: WorkerPanelProps) {
               移出
             </button>
           </div>
+
+          {/* 工作目录：多个 worker 时最需要知道「它到底在哪干活」。
+              路径太长，只显示尾部几段，完整路径放 title 里。 */}
+          {active.workingDir && (
+            <div className="orca-workdir" data-testid="orca-workdir" title={active.workingDir}>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+                <path d="M1.8 4.2h4.4l1.2 1.6h6.8v6.6a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z" />
+              </svg>
+              <span className="orca-workdir-path">{tidyPath(active.workingDir)}</span>
+            </div>
+          )}
 
           {!active.isolated && (
             <div className="orca-warn" data-testid="orca-shared-warn">

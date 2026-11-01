@@ -113,6 +113,18 @@ export async function prepareWorkerWorktree(baseDir: string, label: string): Pro
 
   const target = path.join(repoRoot, WORKTREE_DIR, safeDirName(label));
 
+  /*
+   * 把 .juno/ 加进仓库的忽略规则。
+   *
+   * 不做的话：worktree 目录会变成未跟踪文件，
+   * **Lead 的「本轮改动」面板里会多出好几行 `.juno/worktrees/developer`** ——
+   * 那是 worker 的工作区，不是用户改的东西。
+   *
+   * 用 info/exclude 而不是改用户的 .gitignore：
+   * 后者是用户要提交的文件，偷偷改它不合适。
+   */
+  await ensureWorktreeIgnored(repoRoot);
+
   try {
     // 目录已存在（同名 worker 之前建过又没清理）：先移除再重建，
     // 保证 worker 拿到的是干净的当前代码，而不是上次的残留
@@ -186,5 +198,38 @@ export async function listWorkerWorktrees(baseDir: string): Promise<string[]> {
     return entries.filter((e) => e.isDirectory()).map((e) => path.join(root, e.name));
   } catch {
     return [];
+  }
+}
+
+/**
+ * 确保仓库忽略 `.juno/`。
+ *
+ * 写进 `.git/info/exclude` 而不是 `.gitignore`：
+ * 后者是用户要提交到仓库的文件，我们偷偷改它会让用户的 diff 里
+ * 多出莫名其妙的改动。`info/exclude` 是本地私有的，正合适。
+ *
+ * 幂等：已经有这条规则就不重复写。
+ */
+async function ensureWorktreeIgnored(repoRoot: string): Promise<void> {
+  try {
+    const gitDir = await git(repoRoot, ['rev-parse', '--git-common-dir']);
+    const excludePath = path.join(
+      path.isAbsolute(gitDir) ? gitDir : path.join(repoRoot, gitDir),
+      'info',
+      'exclude',
+    );
+    await fs.mkdir(path.dirname(excludePath), { recursive: true });
+
+    const current = await fs.readFile(excludePath, 'utf8').catch(() => '');
+    if (/^\s*\.juno\/?\s*$/m.test(current)) return;
+
+    const prefix = current && !current.endsWith('\n') ? '\n' : '';
+    await fs.appendFile(
+      excludePath,
+      `${prefix}# Juno/ORCA worker 工作区（不应计入改动）\n.juno/\n`,
+      'utf8',
+    );
+  } catch {
+    // 忽略失败：只是改动面板里多几行噪音，不影响隔离本身
   }
 }

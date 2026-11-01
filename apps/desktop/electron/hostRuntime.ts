@@ -47,6 +47,7 @@ import type {
   ModeState,
   NavigateResult,
   PermissionModeChoice,
+  UiWorker,
   TaskInfo,
   TreeEntry,
   UiMessage,
@@ -1737,25 +1738,39 @@ export class HostRuntime {
    * UI 要的是「现在在干什么」，所以这里以数据库为准 —— 数据库是在
    * 事件回调里同步更新的，两边不会漂。
    */
+  /**
+   * worker 记录 → UI 投影。
+   *
+   * 抽成共用函数而不是在两处各拼一遍：
+   * emitWorkers（推送）和 listWorkers（IPC 拉）必须给出**同形状**的数据，
+   * 否则「面板刚建完能看到目录，刷新一下就没了」这种漂移。
+   *
+   * 实际就踩过：listWorkers 直接返回数据库记录，没有 workingDir，
+   * 而 emitWorkers 单独拼了一份带 workingDir 的，两边不一致。
+   */
+  private toUiWorker(w: OrcaWorkerRecord): UiWorker {
+    return {
+      id: w.id,
+      sessionId: w.sessionId,
+      role: w.role,
+      label: w.label ?? w.role,
+      status: w.status,
+      focused: w.focused,
+      isolated: w.isolated === true,
+      ...(w.isolationReason ? { isolationReason: w.isolationReason } : {}),
+      workingDir: this.workerWorkingDir(w.id),
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+    };
+  }
+
   private emitWorkers(leadSessionId: string): void {
     try {
       const workers = this.orca.listWorkersByLead(leadSessionId);
       this.emit({
         type: 'workers',
         leadSessionId,
-        workers: workers.map((w) => ({
-          id: w.id,
-          sessionId: w.sessionId,
-          role: w.role,
-          label: w.label ?? w.role,
-          status: w.status,
-          focused: w.focused,
-          isolated: w.isolated === true,
-          ...(w.isolationReason ? { isolationReason: w.isolationReason } : {}),
-          workingDir: this.workerWorkingDir(w.id),
-          createdAt: w.createdAt,
-          updatedAt: w.updatedAt,
-        })),
+        workers: workers.map((w) => this.toUiWorker(w)),
       });
     } catch (error) {
       console.warn('[orca] 投影 worker 状态失败:', String(error));
@@ -1989,6 +2004,9 @@ export class HostRuntime {
       }
     }
 
+    // 建完立刻推一次：面板不等下次事件才出现新 worker
+    this.emitWorkers(leadSessionId);
+
     /*
      * 初始任务：建成后立即派活。
      *
@@ -2006,8 +2024,9 @@ export class HostRuntime {
     return record;
   }
 
-  listWorkers(leadSessionId: string): OrcaWorkerRecord[] {
-    return this.orca.listWorkersByLead(leadSessionId);
+  listWorkers(leadSessionId: string): UiWorker[] {
+    // 走同一套投影：IPC 拉和事件推送必须同形状
+    return this.orca.listWorkersByLead(leadSessionId).map((w) => this.toUiWorker(w));
   }
 
   /**
