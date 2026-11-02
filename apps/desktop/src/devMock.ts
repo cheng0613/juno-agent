@@ -66,6 +66,15 @@ export function createMockHost(): HostBridge {
         },
       };
     },
+    async listHarnesses() {
+      return [
+        { id: 'claude-code' as const, label: 'Claude Code', available: true },
+        { id: 'pi' as const, label: 'Pi', available: true },
+      ];
+    },
+    async agentKindOf() {
+      return 'claude-code' as const;
+    },
     async createSession() {
       return {
         sessions: [
@@ -185,8 +194,20 @@ export function createMockHost(): HostBridge {
     async listModels() {
       return {
         models: [
-          { id: 'deepseek-v4.1-flash-1017', label: 'DeepSeek' },
-          { id: 'gpt-4o', label: 'GPT-4o' },
+          {
+            id: 'deepseek-v4.1-flash-1017',
+            label: 'DeepSeek',
+            agentKind: 'claude-code' as const,
+            agentMark: 'C',
+            agentLabel: 'Claude Code',
+          },
+          {
+            id: 'deepseek-v4.1-flash-1017',
+            label: 'DeepSeek',
+            agentKind: 'pi' as const,
+            agentMark: 'π',
+            agentLabel: 'Pi',
+          },
         ],
         current: 'deepseek-v4.1-flash-1017',
       };

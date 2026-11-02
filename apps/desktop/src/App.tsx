@@ -27,7 +27,9 @@ import type {
   TreeEntry,
   TurnDiffPayload,
   TurnStatus,
+  HarnessOption,
   UiMessage,
+  UiModelOption,
   UiWorker,
 } from './shared/ipc';
 
@@ -92,6 +94,15 @@ export function App() {
   const [running, setRunning] = useState(false);
   /** 哪些会话正在跑（多会话并行时侧栏要显示出来） */
   const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+  /**
+   * 可用的 harness。
+   *
+   * 两个引擎各有取舍（见 HarnessOption 的注释），用户按当下要做的事选 ——
+   * 界面不该替他决定。之前我写死了 claude，导致「想用 pi 的功能没办法」。
+   */
+  const [harnesses, setHarnesses] = useState<HarnessOption[]>([]);
+  /** 新建会话时要用的 harness；null = 用默认 */
+  const [pendingHarness, setPendingHarness] = useState<'pi' | 'claude-code' | null>(null);
   /** 侧栏折叠态。窄窗口自己收，用户也能手动切 */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -152,8 +163,15 @@ export function App() {
   }, [notice]);
   const [interrupted, setInterrupted] = useState<InterruptedTurn[]>([]);
   const [model, setModel] = useState('');
-  /** 可选模型清单；只有一个时不显示选择器 */
-  const [models, setModels] = useState<Array<{ id: string; label: string }>>([]);
+  /** 可选「模型 × 引擎」清单；只有一个时不显示选择器 */
+  const [models, setModels] = useState<UiModelOption[]>([]);
+  /**
+   * 当前会话的引擎。
+   *
+   * 换引擎 = 换一套工具和权限，不能在同一会话里热切。
+   * 现在还没从宿主读（下一轮加），先置 null；为 null 时不拦切换。
+   */
+  const [currentAgentKind, setCurrentAgentKind] = useState<'pi' | 'claude-code' | null>(null);
   const [dark, setDark] = useState(false);
   const [input, setInput] = useState('');
   // 正在跑的时候用户又输入的句子，排在这里，等本轮结束自动发出
@@ -278,13 +296,15 @@ export function App() {
       setMessages(boot.messages);
       setModel(boot.model);
       void host.listModels().then((r) => setModels(r.models));
+      void host.listHarnesses().then(setHarnesses);
       setInterrupted(boot.interruptedTurns);
       // 模式状态跟着 bootstrap 一起来，不再单独请求 ——
       // 两个请求并发时 readModes 可能先到，那时会话还没挂上，
       // capabilities 是空的，权限档位就退回内置默认的那三个。
-      console.log('[boot] modes.permissionModes=', boot.modes?.permissionModes?.map((m) => m.id).join(','));
       setModes(boot.modes);
       if (boot.activeSessionId) {
+        // 引擎决定模型下拉的当前行（值是「模型id::引擎」）
+        void host.agentKindOf(boot.activeSessionId).then(setCurrentAgentKind);
         void host.contextUsage(boot.activeSessionId).then(setUsage);
         void host.readExtraDirs(boot.activeSessionId).then(setExtraDirs);
       }
@@ -665,9 +685,24 @@ export function App() {
     [activeId, host],
   );
 
+  /** 模型选择器的当前值：「模型id::引擎」 */
+  const currentModelValue = `${model}::${currentAgentKind ?? ''}`;
+
   const switchModelTo = useCallback(
-    async (modelId: string) => {
-      if (!activeId || modelId === model) return;
+    async (value: string) => {
+      const [modelId, agentKind] = value.split('::') as [string, 'pi' | 'claude-code' | undefined];
+      if (!activeId) return;
+      /*
+       * 换引擎 = 换一套工具和权限（claude 没有 sessionTree，pi 不能自主派活），
+       * 不能在同一会话里热切。提示另开会话，比悄悄什么都不做强。
+       */
+      if (agentKind && currentAgentKind && agentKind !== currentAgentKind) {
+        setNotice(
+          `切换到 ${agentKind === 'pi' ? 'Pi' : 'Claude Code'} 需要新建会话 —— 两个引擎的工具和权限不同，不能热切`,
+        );
+        return;
+      }
+      if (modelId === model) return;
       try {
         const result = await host.switchModel(activeId, modelId);
         // rebuild 意味着上下文可能被重建过，必须告知而不是假装无事发生
@@ -676,7 +711,7 @@ export function App() {
         setNotice(`切换模型失败：${error instanceof Error ? error.message : String(error)}`);
       }
     },
-    [activeId, model, host],
+    [activeId, model, host, currentAgentKind],
   );
 
   /**
@@ -847,6 +882,8 @@ export function App() {
     setTasks([]);
     void host.contextUsage(id).then(setUsage);
     void host.readModes(id).then(setModes);
+    // 切会话时引擎也会变 —— 模型下拉的值带引擎，不更新会定位到错的行
+    void host.agentKindOf(id).then(setCurrentAgentKind);
     void host.readExtraDirs(id).then(setExtraDirs);
     setDirsOpen(false);
     // worker 属于 Lead，切会话必须重拉 —— 否则会显示上一个会话的工人
@@ -1082,8 +1119,20 @@ export function App() {
   // 让 onFocusSession 能调到最新的 switchSession
   switchSessionRef.current = switchSession;
 
-  const newSession = async () => {
-    const boot = await host.createSession();
+  const newSession = async (agentKind?: 'pi' | 'claude-code') => {
+    /*
+     * 已经是一个空会话就别再建。
+     *
+     * 「空会话」= 没消息且没在跑。那种情况下再建一个只是多一条
+     * 「新会话」的重复项，用户还得自己删。Cindy 也一样：
+     * 点「新建」时如果当前就是空的，就停在那。
+     *
+     * 例外：用户指定了不同的 harness —— 那是真的想换一个。
+     */
+    const isEmptyIdle = activeId !== null && messages.length === 0 && !busySessions.has(activeId);
+    if (isEmptyIdle && !agentKind) return;
+
+    const boot = await host.createSession(agentKind);
     setSessions(boot.sessions);
     setActiveId(boot.activeSessionId);
     setMessages(boot.messages);
@@ -1425,19 +1474,27 @@ export function App() {
               <span className="bar-spacer" />
 
               {models.length > 1 && (
+                /*
+                 * value 用「模型id::引擎」而不是只模型 id：
+                 * 同一个模型可能出现两行（claude 和 pi 都能跑），
+                 * 只按模型 id 会撞 key。行尾标记就是执行引擎。
+                 */
                 <select
                   className="model-select bar-select"
-                  value={model}
+                  value={currentModelValue}
                   disabled={running}
-                  title="切换模型（当前会话）"
+                  title="切换模型（行尾标记是执行引擎）"
                   onChange={(e) => void switchModelTo(e.target.value)}
                   data-testid="model-select"
                 >
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
+                  {models.map((m) => {
+                    const v = `${m.id}::${m.agentKind}`;
+                    return (
+                      <option key={v} value={v}>
+                        {m.label}  {m.agentMark}
+                      </option>
+                    );
+                  })}
                 </select>
               )}
 

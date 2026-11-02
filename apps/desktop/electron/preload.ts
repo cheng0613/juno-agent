@@ -13,7 +13,11 @@ import { IPC, type HostBridge, type HostEvent } from '../src/shared/ipc.js';
 
 const bridge: HostBridge = {
   bootstrap: () => ipcRenderer.invoke(IPC.bootstrap),
-  createSession: () => ipcRenderer.invoke(IPC.createSession),
+  // 注意：不能直接传 undefined —— Electron 会把它序列化成 {}，
+  // 到了主进程就变成 object，引擎报 "Agent '[object Object]' is not registered"。
+  createSession: (agentKind) => ipcRenderer.invoke(IPC.createSession, agentKind ?? null),
+  listHarnesses: () => ipcRenderer.invoke(IPC.listHarnesses),
+  agentKindOf: (sessionId) => ipcRenderer.invoke(IPC.agentKindOf, sessionId),
   loadSession: (sessionId) => ipcRenderer.invoke(IPC.loadSession, sessionId),
   send: (input) => ipcRenderer.invoke(IPC.send, input),
   approve: (input) => ipcRenderer.invoke(IPC.approve, input),

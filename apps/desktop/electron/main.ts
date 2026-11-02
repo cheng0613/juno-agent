@@ -162,9 +162,16 @@ async function bootstrap(): Promise<BootstrapResult> {
 function registerIpc(): void {
   ipcMain.handle(IPC.bootstrap, async () => bootstrap());
 
-  ipcMain.handle(IPC.createSession, async (): Promise<BootstrapResult> => {
+  ipcMain.handle(IPC.listHarnesses, async () => runtime!.availableHarnesses());
+  ipcMain.handle(IPC.agentKindOf, async (_e, sessionId: string) => runtime!.agentKindOf(sessionId));
+
+  ipcMain.handle(
+    IPC.createSession,
+    async (_e, rawKind?: 'pi' | 'claude-code' | null): Promise<BootstrapResult> => {
     const rt = runtime!;
-    const id = await rt.createLeadSession();
+    // preload 传 null 表示「没指定」；别让 null / 空对象漏进引擎
+    const agentKind = rawKind === 'pi' || rawKind === 'claude-code' ? rawKind : undefined;
+    const id = await rt.createLeadSession('新会话', agentKind);
     const sessions = await rt.listSessions();
     return {
       sessions,

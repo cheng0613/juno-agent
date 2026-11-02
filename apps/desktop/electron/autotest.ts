@@ -1370,7 +1370,10 @@ export async function runModelTest(win: BrowserWindow, runtime: HostRuntime): Pr
       `document.querySelector('.model-select') ? document.querySelector('.model-select').value : 'missing'`,
     );
     note(`UI 下拉当前值: ${uiValue}`);
-    if (uiValue !== target.id) throw new Error(`UI 没跟随，显示 ${uiValue}`);
+    // 下拉的值现在是「模型id::引擎」—— 同一个模型可能有两个引擎可选
+    if (!uiValue.startsWith(`${target.id}::`)) {
+      throw new Error(`UI 没跟随，显示 ${uiValue}（期望 ${target.id}::*）`);
+    }
 
     // 切换后还能正常对话
     turnsDone = 0;

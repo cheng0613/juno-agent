@@ -883,15 +883,33 @@ export class HostRuntime {
    *
    * 二进制不在时降级到 pi —— 至少能聊天，只是不会自主派活。
    */
-  async createLeadSession(title = '新会话'): Promise<string> {
-    return this.createSession(
-      title,
-      undefined,
-      undefined,
-      'lead',
-      undefined,
-      this.claudeAvailable ? 'claude-code' : 'pi',
-    );
+  /**
+   * 建一个 Lead 会话。
+   *
+   * harness 由调用方指定，不写死 —— 两个引擎各有取舍：
+   *   claude-code  工具直接进模型上下文，能自主派活；但没有会话树/导出/压缩
+   *   pi           功能齐（分支、导出、压缩都有）；但 MCP 工具藏在二段网关后面，
+   *                模型看不到 create_worker，只能手动派活
+   * 用户根据当下要做什么来选，界面不该替他决定。
+   */
+  async createLeadSession(
+    title = '新会话',
+    agentKind?: 'pi' | 'claude-code',
+  ): Promise<string> {
+    const picked = agentKind ?? (this.claudeAvailable ? 'claude-code' : 'pi');
+    // 选 claude 但它没装二进制 → 直接报错，比悄悄降级到 pi 好
+    if (picked === 'claude-code' && !this.claudeAvailable) {
+      throw new Error('Claude Code 未安装，请改用 Pi 或先安装 Claude Code');
+    }
+    return this.createSession(title, undefined, undefined, 'lead', undefined, picked);
+  }
+
+  /** 当前有哪些 harness 可用（给 UI 画选项） */
+  availableHarnesses(): Array<{ id: 'pi' | 'claude-code'; label: string; available: boolean }> {
+    return [
+      { id: 'claude-code', label: 'Claude Code', available: this.claudeAvailable },
+      { id: 'pi', label: 'Pi', available: true },
+    ];
   }
 
   async ensureSession(): Promise<string> {
@@ -1523,9 +1541,36 @@ export class HostRuntime {
     return this.cfg.model;
   }
 
-  listModels(): { models: Array<{ id: string; label: string }>; current: string } {
+  /**
+   * 可选模型，**按「模型 × 引擎」展开**。
+   *
+   * 同一个模型能被多个引擎跑时会出现多行 —— 这是刻意的：
+   * 引擎能力差别很大（claude 能自主派活但没分支面板，pi 反过来），
+   * 用户选的时候得知道自己在选什么。
+   * 行尾的 agentMark 就是引擎标记。
+   */
+  listModels(): { models: Array<{
+    id: string;
+    label: string;
+    agentKind: 'pi' | 'claude-code';
+    agentMark: string;
+    agentLabel: string;
+  }>; current: string } {
+    const engines: Array<{ kind: 'pi' | 'claude-code'; mark: string; label: string }> = [
+      { kind: 'claude-code', mark: 'C', label: 'Claude Code' },
+      { kind: 'pi', mark: 'π', label: 'Pi' },
+    ];
+    const usable = engines.filter((e) => e.kind === 'pi' || this.claudeAvailable);
     return {
-      models: this.catalog.entries.map((m) => ({ id: m.id, label: m.label })),
+      models: this.catalog.entries.flatMap((m) =>
+        usable.map((e) => ({
+          id: m.id,
+          label: m.label,
+          agentKind: e.kind,
+          agentMark: e.mark,
+          agentLabel: e.label,
+        })),
+      ),
       current: this.cfg.model,
     };
   }
@@ -2455,6 +2500,19 @@ export class HostRuntime {
       }
     }
     return out;
+  }
+
+  /**
+   * 当前会话用的哪个 harness。
+   *
+   * UI 需要它：模型选择器的值是「模型id::引擎」，同一模型可能出现两行，
+   * 不带引擎就定位不到具体那一行（浏览器会回退到第一个选项）。
+   */
+  agentKindOf(sessionId: string): 'pi' | 'claude-code' | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    const k = (session as unknown as { agentKind?: string }).agentKind;
+    return k === 'pi' || k === 'claude-code' ? k : null;
   }
 
   /** 验收用：当前会话是否支持 sessionTree（分支面板） */

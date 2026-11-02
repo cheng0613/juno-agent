@@ -9,8 +9,12 @@
 export const IPC = {
   /** 渲染 → 主：拿初始状态（会话列表 + 当前会话消息） */
   bootstrap: 'host:bootstrap',
-  /** 渲染 → 主：新建会话 */
+  /** 渲染 → 主：新建会话（可指定 harness） */
   createSession: 'host:create-session',
+  /** 渲染 → 主：当前可用的 harness 列表 */
+  listHarnesses: 'host:list-harnesses',
+  /** 渲染 → 主：某个会话用的哪个 harness */
+  agentKindOf: 'host:agent-kind-of',
   /** 渲染 → 主：切换会话，取回历史 */
   loadSession: 'host:load-session',
   /** 渲染 → 主：发一条消息 */
@@ -104,6 +108,39 @@ export const IPC = {
  * 刻意不做成「worker 的会话对象」——渲染层不需要知道 worker 背后是个会话，
  * 它只需要知道：叫什么、在干什么、在哪干活。
  */
+/**
+ * 一个 harness（agent 引擎）选项。
+ *
+ * 两个引擎各有取舍，不是「谁更好」：
+ *   claude-code  工具直接进模型上下文 → 能自主派活；但没有分支/导出/压缩
+ *   pi           功能齐；但 MCP 工具要二段发现，不能自主派活
+ */
+/**
+ * 一个可选的「模型 × 引擎」。
+ *
+ * 为什么不是单纯的模型列表：同一个模型可能被多个引擎跑，
+ * 而不同引擎的能力差别很大（claude 能自主派活但没分支面板，
+ * pi 反过来）。所以选项的单位是「模型 + 引擎」，不是模型。
+ * 界面上的表现就是列表里同一模型出现多行，行尾标引擎。
+ */
+export interface UiModelOption {
+  id: string;
+  label: string;
+  /** 这个模型能用哪个引擎跑 */
+  agentKind: 'pi' | 'claude-code';
+  /** 行尾标记，如 'π' / 'C' */
+  agentMark: string;
+  /** 引擎显示名 */
+  agentLabel: string;
+}
+
+export interface HarnessOption {
+  id: 'pi' | 'claude-code';
+  label: string;
+  /** 二进制没装时为 false，UI 要置灰而不是让用户选了报错 */
+  available: boolean;
+}
+
 export interface UiWorker {
   id: string;
   sessionId: string;
@@ -520,7 +557,13 @@ export interface ApproveInput {
 /** preload 暴露到 window 上的 API 形状 */
 export interface HostBridge {
   bootstrap(): Promise<BootstrapResult>;
-  createSession(): Promise<BootstrapResult>;
+  /** 新建会话。不传 harness 就用默认（claude 可用则 claude） */
+  createSession(agentKind?: 'pi' | 'claude-code'): Promise<BootstrapResult>;
+  /** 当前可用的 harness（给 UI 画选项） */
+  listHarnesses(): Promise<HarnessOption[]>;
+  /** 某个会话用的哪个 harness；UI 用它定位模型下拉的具体行 */
+  agentKindOf(sessionId: string): Promise<'pi' | 'claude-code' | null>;
+  agentKindOf(sessionId: string): Promise<'pi' | 'claude-code' | null>;
   loadSession(sessionId: string): Promise<UiMessage[]>;
   send(input: SendInput): Promise<void>;
   approve(input: ApproveInput): Promise<void>;
@@ -535,7 +578,7 @@ export interface HostBridge {
   setPermissionMode(sessionId: string, mode: PermissionModeChoice): Promise<void>;
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
   setEffort(sessionId: string, effort: string): Promise<void>;
-  listModels(): Promise<{ models: Array<{ id: string; label: string }>; current: string }>;
+  listModels(): Promise<{ models: UiModelOption[]; current: string }>;
   /** 切换模型；rebuilt=true 表示上下文可能重建过 */
   switchModel(sessionId: string, modelId: string): Promise<{ rebuilt: boolean }>;
   /** 导出会话为 HTML，返回落盘的绝对路径 */
