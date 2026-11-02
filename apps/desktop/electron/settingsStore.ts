@@ -30,6 +30,8 @@ export interface AppSettings {
   approval?: 'ipc' | 'allow';
   /** 工作目录；空 = 用 dataDir/workspace */
   workDir?: string;
+  /** 每个引擎的默认模型，JSON：{"claude-code":"xxx","pi":"yyy"} */
+  agentModels?: string;
 }
 
 /** 落盘形状：密钥单独一段，带加密标记 */
@@ -96,7 +98,7 @@ export async function readSettings(): Promise<AppSettings> {
  */
 export async function writeSettings(next: AppSettings): Promise<{ encrypted: boolean }> {
   const stored: StoredSettings = {};
-  for (const key of ['model', 'endpoint', 'api', 'models', 'efforts', 'approval', 'workDir'] as const) {
+  for (const key of ['model', 'endpoint', 'api', 'models', 'efforts', 'approval', 'workDir', 'agentModels'] as const) {
     const value = next[key];
     if (typeof value === 'string' && value.trim()) {
       (stored as Record<string, unknown>)[key] = value.trim();

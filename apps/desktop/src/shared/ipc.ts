@@ -380,6 +380,14 @@ export interface SettingsState {
 export interface SettingsInput {
   apiKey?: string;
   model?: string;
+  /**
+   * 每个引擎的默认模型。JSON：{"claude-code":"xxx","pi":"yyy"}。
+   *
+   * 为什么要它：模型是共用的，但两个引擎能跑的集合未必一样。
+   * 让用户给每个引擎配一个默认，新建会话时按这个取，
+   * 比「用同一个模型跑所有引擎」可控。
+   */
+  agentModels?: string;
   endpoint?: string;
   api?: string;
   contextWindow?: number;

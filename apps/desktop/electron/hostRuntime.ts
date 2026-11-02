@@ -93,6 +93,11 @@ export interface HostConfig {
   /** 多模型清单（JSON 字符串）；与 APP_MODELS 同格式 */
   modelsJson?: string;
   /**
+   * 每个引擎的默认模型，如 { 'claude-code': 'xxx', pi: 'yyy' }。
+   * 新建会话时按引擎取；没配就用全局 model。
+   */
+  agentModels?: Record<string, string>;
+  /**
    * 一轮零事件多久后判定卡死（毫秒）。0 = 关闭。
    *
    * 引擎自己的默认是 45 分钟 —— 对用户来说太久了，
@@ -104,6 +109,8 @@ export interface HostConfig {
 export interface EnvOverrides {
   apiKey?: string;
   model?: string;
+  /** 每个引擎的默认模型，JSON */
+  agentModels?: string;
   endpoint?: string;
   api?: string;
   contextWindow?: number;
@@ -124,6 +131,27 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig {
   // 用固定名字而不是 mkdtemp：临时目录重启就没了，对话会丢。
   const dataDir =
     process.env.APP_DATA_DIR ?? path.join(os.tmpdir(), 'juno-desktop');
+  /*
+   * 每个引擎的默认模型。
+   * 解析失败就当没配 —— 配置写错了不该让应用起不来。
+   */
+  const agentModelsRaw = process.env.APP_AGENT_MODELS?.trim() || file.agentModels?.trim();
+  let agentModels: Record<string, string> = {};
+  if (agentModelsRaw) {
+    try {
+      const parsed = JSON.parse(agentModelsRaw) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        agentModels = Object.fromEntries(
+          Object.entries(parsed as Record<string, unknown>).filter(
+            (e): e is [string, string] => typeof e[1] === 'string' && e[1].length > 0,
+          ),
+        );
+      }
+    } catch {
+      agentModels = {};
+    }
+  }
+
   const pick = (envName: string, fileValue: string | undefined, fallback: string): string =>
     process.env[envName]?.trim() || fileValue?.trim() || fallback;
 
@@ -161,6 +189,8 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig {
     apiKey: process.env.APP_PI_API_KEY?.trim() || file.apiKey?.trim() || undefined,
     /** 多模型清单（JSON 字符串），运行期解析 */
     modelsJson: process.env.APP_MODELS?.trim() || file.models?.trim() || undefined,
+    /** 每个引擎的默认模型（已在上面解析成对象） */
+    agentModels,
     turnStallMs,
   };
 }
@@ -901,7 +931,13 @@ export class HostRuntime {
     if (picked === 'claude-code' && !this.claudeAvailable) {
       throw new Error('Claude Code 未安装，请改用 Pi 或先安装 Claude Code');
     }
-    return this.createSession(title, undefined, undefined, 'lead', undefined, picked);
+    /*
+     * 模型按引擎取默认值：设置里给每个引擎配了一个，没配就用全局 model。
+     * 为什么按引擎分开：两个引擎能跑的集合未必一样，
+     * 用同一个模型跑所有引擎会让某一个跑不了。
+     */
+    const model = this.cfg.agentModels?.[picked];
+    return this.createSession(title, model, undefined, 'lead', undefined, picked);
   }
 
   /** 当前有哪些 harness 可用（给 UI 画选项） */
@@ -920,15 +956,9 @@ export class HostRuntime {
     if (existing.length > 0) {
       return await this.resume(existing[0]!.id);
     }
-    // 用户新建的会话就是 Lead：用 claude-code 建，它能看到派活工具
-    return await this.createSession(
-      '新会话',
-      undefined,
-      undefined,
-      'lead',
-      undefined,
-      this.claudeAvailable ? 'claude-code' : 'pi',
-    );
+    // 用户新建的会话就是 Lead —— 统一走 createLeadSession，
+    // 那里会按引擎取默认模型。直接调 createSession 会绕过那层配置。
+    return await this.createLeadSession();
   }
 
   /**

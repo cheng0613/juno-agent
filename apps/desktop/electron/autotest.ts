@@ -2987,14 +2987,28 @@ export async function runSessionOrgTest(win: BrowserWindow, runtime: HostRuntime
 
     // 通过 UI 建会话（点侧栏「+ 新会话」），这样 React 的列表也会更新。
     // 直接调 runtime.createSession 的话界面不知道，后面验不了会话项。
+    /*
+     * 点「新建」现在有个去重：当前已是空会话就不再建。
+     * 所以这里改用两份不同的 harness 各建一个 —— 指定了 harness
+     * 就是「真的想换一个」，不会被去重拦。
+     * 顺便验一下「指定 harness 建会话」这条路径。
+     */
+    for (const kind of ['claude-code', 'pi'] as const) {
+      const sid = await win.webContents.executeJavaScript(
+        `window.host.createSession(${JSON.stringify(kind)}).then((r) => r.activeSessionId)`,
+      );
+      note(`建出 ${kind}: ${String(sid).slice(0, 8)}`);
+      await delay(1200);
+    }
+
+    /*
+     * React 不知道我们用 IPC 直接建了会话 —— 点一下侧栏「会话」会触发重拉。
+     * 不拉的话 DOM 里还是只有 bootstrap 那一个，后面的菜单操作全部 too-few。
+     */
     await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (b) b.click(); return 'ok'; })()`,
+      `document.querySelector('[data-testid="nav-sessions"]')?.click()`,
     );
-    await delay(900);
-    await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (b) b.click(); return 'ok'; })()`,
-    );
-    await delay(900);
+    await delay(1500);
 
     const current = await runtime.listSessions();
     note(`UI 建出 ${current.length} 个会话: ${current.map((x) => x.title).join(', ')}`);
@@ -3482,13 +3496,21 @@ export async function runEventRoutingTest(win: BrowserWindow, runtime: HostRunti
 
   try {
     await delay(2500);
-    // 走 UI 建会话：直接调 IPC 的话 React 的 sessions 列表不更新，
-    // 后面按侧栏项切换会找不到元素（踩过）
+    /*
+     * 用指定 harness 建第二个会话。
+     * 点「新建」会被空会话去重拦住（当前就是空会话）。
+     * 之后还得让 React 知道 —— 点一下「新建」会触发列表刷新
+     * （去重分支里也调了 listSessions）。
+     */
     const clicked = await win.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('[data-testid="nav-new"]'); if (!b) return 'no-btn'; b.click(); return 'ok'; })()`,
+      `window.host.createSession('pi').then((r) => r.activeSessionId)`,
     );
-    note(`点新建会话: ${clicked}`);
+    note(`建出会话: ${String(clicked).slice(0, 8)}`);
     await delay(1500);
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="nav-new"]')?.click()`,
+    );
+    await delay(1200);
     const uiItems = await win.webContents.executeJavaScript(
       `document.querySelectorAll('[data-testid="session-item"]').length`,
     );
@@ -3499,23 +3521,22 @@ export async function runEventRoutingTest(win: BrowserWindow, runtime: HostRunti
     const b = sessions[0]!.id;
     note(`A=${a.slice(0, 8)} B=${b.slice(0, 8)}`);
 
-    // 不改名：React 的列表不认宿主侧的 rename，改了反而找不到。
-    // 直接按索引切换 —— 侧栏顺序与 listSessions 一致（都按 updated_at）。
-
-    // 给两个会话起可辨识的名字，后面按标题切换才可靠
-    runtime.renameSession(a, '后台甲');
-    runtime.renameSession(b, '当前乙');
-    await delay(300);
+    // 直接按 data-session-id 定位，不靠标题/索引 —— 侧栏顺序会因 updated_at 变。
+    // 也不调 runtime.renameSession：它只改宿主，React 列表不跟着变。
 
     // A 在后台生成一段带标记的内容（中文长句，流式会分成很多段）
     const marker = '后台任务标记ABC';
     await runtime.send(a, `请把「${marker}」这句话重复 20 遍，每遍一行，不要任何其他内容`);
 
     // 切到 B
+    //
+    // 必须**点侧栏**而不是调 window.host.loadSession(b)：
+    // 后者只换了宿主侧会话，React 的 activeRef 还是 A ——
+    // 界面看的还是 A，断言就会误报「后台内容串到了当前会话」。
     await win.webContents.executeJavaScript(
-      `window.host.loadSession(${JSON.stringify(b)}).then(() => 'ok')`,
+      `document.querySelector('[data-session-id="${b}"] button')?.click()`,
     );
-    await delay(500);
+    await delay(800);
 
     // 关键验证一：宿主发出的每条事件都必须带 sessionId，且只属于一个会话。
     // 这是路由正确性的根 —— 事件没带对会话，UI 再怎么写都会串。
@@ -3621,12 +3642,15 @@ export async function runLiveViewTest(win: BrowserWindow, runtime: HostRuntime):
 
   try {
     await delay(2500);
-    // 走 UI 建会话，保证侧栏有两项可点
+    /*
+     * 用指定 harness 建第二个会话。
+     * 走 UI 点「新建」会被空会话去重拦住（当前就是空会话），
+     * 指定 harness 算「真的想换一个」，不会被拦。
+     */
     await win.webContents.executeJavaScript(
-      `(() => { document.querySelector('[data-testid="nav-new"]')?.click(); return 'ok'; })()`,
+      `window.host.createSession('pi').then((r) => r.activeSessionId)`,
     );
-    // 建会话要启动 pi 子进程（约 900ms）再等 React 更新，1200ms 不够稳。
-    // 轮询等第二个会话出现，最多 15 秒。
+    // 建会话要启动子进程（约 900ms）再等列表，轮询最多 15 秒。
     let sessions = await runtime.listSessions();
     for (let i = 0; i < 30 && sessions.length < 2; i += 1) {
       await delay(500);

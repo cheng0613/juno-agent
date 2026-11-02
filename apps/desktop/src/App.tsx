@@ -1130,7 +1130,15 @@ export function App() {
      * 例外：用户指定了不同的 harness —— 那是真的想换一个。
      */
     const isEmptyIdle = activeId !== null && messages.length === 0 && !busySessions.has(activeId);
-    if (isEmptyIdle && !agentKind) return;
+    if (isEmptyIdle && !agentKind) {
+      /*
+       * 不建新的，但顺手刷一下列表。
+       * 用户点「新建」的心里预期是「看到最新的会话」，什么都不做
+       * 会让人以为按钮坏了。
+       */
+      void host.listSessions().then(setSessions);
+      return;
+    }
 
     const boot = await host.createSession(agentKind);
     setSessions(boot.sessions);
