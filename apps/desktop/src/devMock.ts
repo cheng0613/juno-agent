@@ -62,6 +62,7 @@ export function createMockHost(): HostBridge {
             { id: 'auto', label: '自动审批', description: '' },
             { id: 'bypassPermissions', label: '完全访问', description: '' },
           ],
+          features: { sessionTree: true, exportHtml: true, manualCompact: true, steer: true, extraDirs: true },
         },
       };
     },
@@ -84,6 +85,7 @@ export function createMockHost(): HostBridge {
             { id: 'auto', label: '自动审批', description: '' },
             { id: 'bypassPermissions', label: '完全访问', description: '' },
           ],
+          features: { sessionTree: true, exportHtml: true, manualCompact: true, steer: true, extraDirs: true },
         },
       };
     },
@@ -177,6 +179,7 @@ export function createMockHost(): HostBridge {
           { id: 'auto', label: '自动审批', description: '' },
           { id: 'bypassPermissions', label: '完全访问', description: '' },
         ],
+        features: { sessionTree: true, exportHtml: true, manualCompact: true, steer: true, extraDirs: true },
       };
     },
     async listModels() {

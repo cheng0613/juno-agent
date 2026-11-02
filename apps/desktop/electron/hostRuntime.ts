@@ -483,6 +483,13 @@ export class HostRuntime {
     effort: null,
     effortLevels: [],
     permissionModes: [],
+    features: {
+      sessionTree: true,
+      exportHtml: true,
+      manualCompact: true,
+      steer: true,
+      extraDirs: true,
+    },
   };
 
   /** 引擎推来的子任务，按 taskId 聚合成最新快照 */
@@ -2388,6 +2395,27 @@ export class HostRuntime {
       .prepare('SELECT working_dir FROM orca_workers WHERE id = ?')
       .get(workerId) as { working_dir: string | null } | undefined;
     return row?.working_dir ?? null;
+  }
+
+  /** 验收用：dump 当前会话的能力声明 */
+  debugCapabilities(sessionId: string): Record<string, unknown> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { error: 'no-session' };
+    const caps = (session as unknown as { capabilities?: Record<string, unknown> }).capabilities ?? {};
+    const out: Record<string, unknown> = {};
+    for (const k of [
+      'fork', 'rewind', 'sessionTree', 'sameTurnSteer', 'abort', 'planMode',
+      'extraDirs', 'writableDirs', 'sessionHtmlExport', 'manualCompact',
+      'setPermissionModeMidSession', 'switchModel', 'hasFastMode',
+    ]) {
+      const v = caps[k];
+      if (v && typeof v === 'object' && 'supported' in (v as object)) {
+        out[k] = (v as { supported: unknown }).supported;
+      } else {
+        out[k] = v ?? '(未声明)';
+      }
+    }
+    return out;
   }
 
   /** 验收用：当前会话是否支持 sessionTree（分支面板） */

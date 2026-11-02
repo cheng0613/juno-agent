@@ -465,6 +465,27 @@ export interface ModeState {
    * 空数组 = 取不到能力信息，UI 退回内置默认。
    */
   permissionModes: Array<{ id: string; label: string; description: string }>;
+  /**
+   * 当前 harness 支持哪些功能。
+   *
+   * 为什么要一次给全：这些能力各自独立，但 UI 上是一批按钮。
+   * 不给的话用户点了才报 NotSupportedError —— 体验很差，
+   * 而且错误信息是引擎内部术语（not-implemented）。
+   *
+   * 缺省 = 支持（老 harness 没声明就不影响现有行为）。
+   */
+  features: {
+    /** 分支面板（sessionTree） */
+    sessionTree: boolean;
+    /** 导出为 HTML */
+    exportHtml: boolean;
+    /** 手动压缩上下文 */
+    manualCompact: boolean;
+    /** 轮进行中插话 */
+    steer: boolean;
+    /** 额外目录 */
+    extraDirs: boolean;
+  };
 }
 
 /**
