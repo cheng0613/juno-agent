@@ -205,6 +205,14 @@ export interface BootstrapResult {
   /** 上次进程被中断、尚未收口的轮 */
   interruptedTurns: InterruptedTurn[];
   model: string;
+  /**
+   * 初始模式状态。
+   *
+   * 跟着 bootstrap 一次返回，而不是让渲染层再发一次 readModes ——
+   * 两个请求并发时 readModes 可能先到，那时会话还没挂上，
+   * 拿到的 capabilities 是空的（权限档位就变成内置默认的那三个）。
+   */
+  modes: ModeState;
 }
 
 /**
@@ -416,7 +424,17 @@ export interface CompactResult {
  * 引擎的 PermissionMode 还包含 default/acceptEdits/plan，但 pi 不认，
  * 摆到 UI 上只会让用户点了没反应。
  */
-export type PermissionModeChoice = 'ask' | 'auto' | 'bypassPermissions';
+/**
+ * 权限档位。
+ *
+ * 不同 harness 支持的子集不一样：
+ *   pi           ask / auto / bypassPermissions
+ *   claude-code  ask / acceptEdits / auto / bypassPermissions
+ *   codex        ask / auto / bypassPermissions
+ * 所以这里列全集，具体能选哪些由 capabilities.permissionModes 决定。
+ * 不能因为 pi 不认 acceptEdits 就把它从类型里删掉。
+ */
+export type PermissionModeChoice = 'ask' | 'acceptEdits' | 'auto' | 'bypassPermissions';
 
 /** 档位对用户的含义要直说，不能只给个英文 id */
 export interface PermissionModeInfo {
@@ -435,6 +453,18 @@ export interface ModeState {
   effort: string | null;
   /** 支持的档位 id，空数组 = 不支持 */
   effortLevels: string[];
+  /**
+   * 当前 harness 支持的权限档位，带显示名和说明。
+   *
+   * 为什么不写死在 UI：三个 harness 支持的档位不一样 ——
+   *   pi           ask / auto / bypassPermissions
+   *   claude-code  ask / acceptEdits / auto / bypassPermissions
+   *   codex        ask / auto / bypassPermissions
+   * UI 写死就会出现「界面有这个选项，点了引擎报 not supported」。
+   * 和 effortLevels 同一套思路：**引擎声明什么，界面就画什么**。
+   * 空数组 = 取不到能力信息，UI 退回内置默认。
+   */
+  permissionModes: Array<{ id: string; label: string; description: string }>;
 }
 
 /**

@@ -52,6 +52,17 @@ export function createMockHost(): HostBridge {
           },
         ],
         model: 'deepseek-v4.1-flash-1017 · mock',
+        modes: {
+          permissionMode: 'ask',
+          planMode: false,
+          effort: 'medium',
+          effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+          permissionModes: [
+            { id: 'ask', label: '默认权限', description: '' },
+            { id: 'auto', label: '自动审批', description: '' },
+            { id: 'bypassPermissions', label: '完全访问', description: '' },
+          ],
+        },
       };
     },
     async createSession() {
@@ -63,6 +74,17 @@ export function createMockHost(): HostBridge {
         messages: [],
         interruptedTurns: [],
         model: 'mock',
+        modes: {
+          permissionMode: 'ask',
+          planMode: false,
+          effort: 'medium',
+          effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+          permissionModes: [
+            { id: 'ask', label: '默认权限', description: '' },
+            { id: 'auto', label: '自动审批', description: '' },
+            { id: 'bypassPermissions', label: '完全访问', description: '' },
+          ],
+        },
       };
     },
     async loadSession() {
@@ -150,6 +172,11 @@ export function createMockHost(): HostBridge {
         planMode: false,
         effort: 'medium',
         effortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+        permissionModes: [
+          { id: 'ask', label: '默认权限', description: '' },
+          { id: 'auto', label: '自动审批', description: '' },
+          { id: 'bypassPermissions', label: '完全访问', description: '' },
+        ],
       };
     },
     async listModels() {

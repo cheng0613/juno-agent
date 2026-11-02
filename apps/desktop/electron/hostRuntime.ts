@@ -168,6 +168,27 @@ export function configFromEnv(file: EnvOverrides = {}): HostConfig {
 const logger = createConsoleLogger('host');
 
 /**
+ * 权限档位的中文文案。
+ *
+ * 引擎只给英文 displayName（Claude 上游的原文），界面要中文。
+ * 按 id 映射，认不得的 id 才退回引擎的值 —— 这样新档位出现时不至于空白。
+ */
+const PERMISSION_MODE_LABELS: Record<string, string> = {
+  ask: '默认权限',
+  acceptEdits: '自动接受编辑',
+  auto: '自动审批',
+  bypassPermissions: '完全访问',
+  plan: '计划模式',
+  default: '默认权限',
+};
+const PERMISSION_MODE_HINTS: Record<string, string> = {
+  ask: '只读工具直接执行；写文件、跑命令和 MCP 工具每次都询问。',
+  acceptEdits: '自动接受所有文件编辑；跑命令等其它操作仍然询问。',
+  auto: '工作区内写文件和常用安全命令不再问；区外写入和危险命令仍会问。',
+  bypassPermissions: '任何文件都能改、任何命令都能跑，不再确认。只在你完全信任任务时用。',
+};
+
+/**
  * 把库里存的 content 转成一行摘要文本。
  *
  * content 历史上两种形状：裸字符串 / `{ text }` 对象。两种都兼容。
@@ -455,7 +476,13 @@ export class HostRuntime {
    * 为什么要在宿主侧存一份：引擎的 getPlanMode() 可能返回 null，
    * 而 UI 总得知道现在是什么状态。这里存的是「最后一次确认过的值」。
    */
-  private modes: ModeState = { permissionMode: 'ask', planMode: false, effort: null, effortLevels: [] };
+  private modes: ModeState = {
+    permissionMode: 'ask',
+    planMode: false,
+    effort: null,
+    effortLevels: [],
+    permissionModes: [],
+  };
 
   /** 引擎推来的子任务，按 taskId 聚合成最新快照 */
   private readonly taskMap = new Map<string, TaskInfo>();
@@ -1961,7 +1988,47 @@ export class HostRuntime {
       // 拿不到就用记着的值
     }
     this.refreshEffort();
+    this.refreshPermissionModes(sessionId);
     return { ...this.modes };
+  }
+
+  /**
+   * 从引擎能力里读当前 harness 支持的权限档位。
+   *
+   * 三个 harness 支持的档位不一样（claude-code 多一个 acceptEdits），
+   * UI 写死三个就会出现「点了引擎报 not supported」。
+   * 取不到就留空数组，UI 退回内置默认 —— 不因为拿不到能力就把控件藏起来。
+   */
+  private refreshPermissionModes(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.log('[modes] refreshPermissionModes: 会话还没挂', sessionId.slice(0, 8));
+      return;
+    }
+    try {
+      const caps = (
+        session as unknown as {
+          capabilities?: {
+            permissionModes?: Array<{ id?: string; displayName?: string; description?: string }>;
+          };
+        }
+      ).capabilities;
+      const list = (caps?.permissionModes ?? [])
+        .filter((m): m is { id: string; displayName?: string; description?: string } =>
+          typeof m?.id === 'string' && m.id.length > 0,
+        )
+        .map((m) => ({
+          id: m.id,
+          // 引擎给的是英文 displayName（Claude 上游就这么写的），
+          // 界面要中文。认得的 id 用本地文案，认不得的才退回引擎的值。
+          label: PERMISSION_MODE_LABELS[m.id] ?? m.displayName ?? m.id,
+          description: PERMISSION_MODE_HINTS[m.id] ?? m.description ?? '',
+        }));
+      this.modes.permissionModes = list;
+      console.log('[modes] refreshPermissionModes', sessionId.slice(0, 8), '→', list.map((m) => m.id).join(','));
+    } catch {
+      this.modes.permissionModes = [];
+    }
   }
 
   /**

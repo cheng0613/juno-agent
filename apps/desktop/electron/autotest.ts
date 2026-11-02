@@ -1096,6 +1096,8 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
       `window.host.bootstrap().then((r) => r.activeSessionId)`,
     );
     note(`会话 ${sessionId}`);
+    const caps = await runtime.readModes(sessionId);
+    note('权限档位: ' + JSON.stringify(caps.permissionModes.map((m) => m.id)));
 
     /*
      * 等 React 的 activeId 就位 —— 权限按钮的 disabled={!activeId} 依赖它。
@@ -1120,6 +1122,10 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
       `[...document.querySelectorAll('.mode-item-label')].map(e => e.textContent)`,
     );
     note(`菜单项: ${JSON.stringify(items)}`);
+    const uiModes = await win.webContents.executeJavaScript(
+      `(() => { const el = document.querySelector('[data-testid="permission-trigger"]'); return el ? el.getAttribute('data-mode-count') : 'no-trigger'; })()`,
+    );
+    note('trigger mode: ' + uiModes);
     await shootTo(win, '20-permission-menu');
     note('截图 20-permission-menu');
 

@@ -206,6 +206,8 @@ export function App() {
     planMode: false,
     effort: null,
     effortLevels: [],
+    // 空数组 = 还没读到能力信息，UI 退回内置默认
+    permissionModes: [],
   });
   // 递增即表示「强制滚到底」：只有切会话/续跑这类主动跳转才用，
   // 流式输出仍然走「贴底才跟随」的保守策略
@@ -270,9 +272,13 @@ export function App() {
       setModel(boot.model);
       void host.listModels().then((r) => setModels(r.models));
       setInterrupted(boot.interruptedTurns);
+      // 模式状态跟着 bootstrap 一起来，不再单独请求 ——
+      // 两个请求并发时 readModes 可能先到，那时会话还没挂上，
+      // capabilities 是空的，权限档位就退回内置默认的那三个。
+      console.log('[boot] modes.permissionModes=', boot.modes?.permissionModes?.map((m) => m.id).join(','));
+      setModes(boot.modes);
       if (boot.activeSessionId) {
         void host.contextUsage(boot.activeSessionId).then(setUsage);
-        void host.readModes(boot.activeSessionId).then(setModes);
         void host.readExtraDirs(boot.activeSessionId).then(setExtraDirs);
       }
     })();
@@ -471,12 +477,14 @@ export function App() {
         }
 
         case 'modes': {
-          setModes({
+          setModes((prev) => ({
             permissionMode: event.permissionMode,
             planMode: event.planMode,
             effort: event.effort,
             effortLevels: event.effortLevels,
-          });
+            // 档位清单不在事件里（harness 不会中途换能力），保留上次读到的
+            permissionModes: prev.permissionModes,
+          }));
           return;
         }
 

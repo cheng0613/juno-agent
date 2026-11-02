@@ -154,6 +154,8 @@ async function bootstrap(): Promise<BootstrapResult> {
     messages: await mapRowsToUi(rows),
     interruptedTurns: rt.interruptedTurns(),
     model: rt.currentModel(),
+    // 会话已 attach，这时读 capabilities 才是准的
+    modes: await rt.readModes(sessionId),
   };
 }
 
@@ -170,6 +172,7 @@ function registerIpc(): void {
       messages: [],
       interruptedTurns: rt.interruptedTurns(),
       model: rt.currentModel(),
+      modes: await rt.readModes(id),
     };
   });
 

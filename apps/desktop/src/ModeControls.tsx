@@ -50,6 +50,15 @@ export function permissionIcon(id: PermissionModeChoice, size = 14) {
       </svg>
     );
   }
+  // claude-code 独有：自动接受文件编辑，其余操作仍问
+  if (id === 'acceptEdits') {
+    return (
+      <svg {...p}>
+        <path d="M11.4 2.2l2.4 2.4-8.2 8.2H3.2v-2.4z" />
+        <path d="M9.6 4l2.4 2.4" />
+      </svg>
+    );
+  }
   return (
     <svg {...p}>
       <path d="M8 2.2L14.4 13H1.6z" />
@@ -142,6 +151,8 @@ export function ModeControls({
           setConfirming(false);
         }}
         data-testid="permission-trigger"
+        data-mode={modes.permissionMode}
+        data-mode-count={modes.permissionModes.length}
       >
         <span className="mode-btn-icon">{permissionIcon(modes.permissionMode)}</span>
         {current?.label ?? modes.permissionMode}
@@ -220,7 +231,20 @@ export function ModeControls({
               </div>
             </div>
           ) : (
-            PERMISSION_MODES.map((mode) => (
+            /*
+             * 档位来自宿主上报的 capabilities.permissionModes ——
+             * 三个 harness 支持的档位不一样（claude-code 多一个 acceptEdits）。
+             * 取不到时回落到内置默认，不因为拿不到能力就不画控件。
+             */
+            (modes.permissionModes.length > 0
+              ? modes.permissionModes.map((m) => ({
+                  id: m.id as PermissionModeChoice,
+                  label: m.label,
+                  hint: m.description,
+                  dangerous: m.id === 'bypassPermissions',
+                }))
+              : PERMISSION_MODES
+            ).map((mode) => (
               <button
                 key={mode.id}
                 className={`mode-item${mode.id === modes.permissionMode ? ' active' : ''}${
