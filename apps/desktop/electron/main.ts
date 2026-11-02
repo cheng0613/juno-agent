@@ -162,7 +162,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.createSession, async (): Promise<BootstrapResult> => {
     const rt = runtime!;
-    const id = await rt.createSession();
+    const id = await rt.createLeadSession();
     const sessions = await rt.listSessions();
     return {
       sessions,

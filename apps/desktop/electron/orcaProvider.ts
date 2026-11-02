@@ -19,6 +19,8 @@
  * 这个 provider 走的就是 B：工具直接挂进系统提示，模型一眼能看到。
  */
 import type { McpProvider, McpProviderContext } from '@cindy/maker-core';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
 import { ORCA_PREDEFINED_ROLES, ORCA_WORKER_HARD_LIMIT, type OrcaWorkerRecord } from '@juno/host-core';
 
@@ -47,7 +49,7 @@ export interface OrcaProviderHost {
 export type RegisterOrcaTool = (
   name: string,
   description: string,
-  shape: Record<string, unknown>,
+  shape: z.ZodRawShape,
   handler: (args: Record<string, unknown>) => Promise<{
     content: Array<{ type: 'text'; text: string }>;
     isError?: boolean;
@@ -94,9 +96,7 @@ export function defineOrcaTools(
         '什么时候用：干完了、遇到卡点、需要 Lead 决策。\n' +
         '写什么：结论 + 关键细节（改了哪些文件、命令输出、为什么这么做）。\n' +
         '不要只说「完成了」—— Lead 看不到你的对话，也不在你的工作目录里。',
-      {
-        message: { type: 'string', description: '要汇报的内容，Lead 会完整看到' },
-      },
+      { message: z.string().describe('要汇报的内容，Lead 会完整看到') },
       async (args) => {
         const message = String(args.message ?? '').trim();
         if (!message) return fail('message 不能为空');
@@ -123,12 +123,14 @@ export function defineOrcaTools(
 
 创建后 worker 处于待命，用 send_to_worker 派活。`,
     {
-      role: {
-        type: 'string',
-        description: `角色名，决定它擅长什么。可选：${ORCA_PREDEFINED_ROLES.join(' / ')}。默认 developer`,
-      },
-      label: { type: 'string', description: '给这个 worker 起的短名字，撞名会自动加序号' },
-      first_task: { type: 'string', description: '可选：创建后立刻派给它做的事' },
+      role: z
+        .string()
+        .optional()
+        .describe(
+          `角色名，决定它擅长什么。可选：${ORCA_PREDEFINED_ROLES.join(' / ')}。默认 developer`,
+        ),
+      label: z.string().optional().describe('给这个 worker 起的短名字，撞名会自动加序号'),
+      first_task: z.string().optional().describe('可选：创建后立刻派给它做的事'),
     },
     async (args) => {
       try {
@@ -155,11 +157,12 @@ export function defineOrcaTools(
     'send_to_worker',
     '给一个 worker 派活或追加要求。worker 会立刻开始干活，干完后用 send_to_lead 汇报。',
     {
-      worker_id: { type: 'string', description: 'create_worker 返回的 id，或用 list_workers 查' },
-      message: {
-        type: 'string',
-        description: '要它做的事。写清楚期望结果 —— worker 看不到你的对话，只说「继续」它不知道继续什么',
-      },
+      worker_id: z.string().describe('create_worker 返回的 id，或用 list_workers 查'),
+      message: z
+        .string()
+        .describe(
+          '要它做的事。写清楚期望结果 —— worker 看不到你的对话，只说「继续」它不知道继续什么',
+        ),
     },
     async (args) => {
       const workerId = String(args.worker_id ?? '');
@@ -214,7 +217,7 @@ export function createOrcaProvider(host: OrcaProviderHost): McpProvider & {
    */
   materialize: (ctx: McpProviderContext) => {
     name: string;
-    tools: Array<{ name: string; description: string; shape: Record<string, unknown> }>;
+    tools: Array<{ name: string; description: string; shape: z.ZodRawShape }>;
   };
 } {
   return {
@@ -233,8 +236,26 @@ export function createOrcaProvider(host: OrcaProviderHost): McpProvider & {
       return true;
     },
 
+    /*
+     * Claude Code 的注入形态：返回一个 in-process McpServer。
+     *
+     * 这是 ORCA 能用的关键 —— claude-code 会把这里的 tool 直接注册进模型
+     * 上下文，模型看到的就是 create_worker 这样的工具名，不用二段发现。
+     * 对照 pi：那边的工具藏在 list_tools/call_tool 后面，模型会编造名字。
+     */
+    toClaudeSdkConfig: (ctx) => {
+      const server = new McpServer({ name: ORCA_PROVIDER_NAME, version: '0.1.0' });
+      defineOrcaTools(host, ctx, (name, description, shape, handler) => {
+        server.tool(name, description, shape, async (args) => {
+          const r = await handler(args as Record<string, unknown>);
+          return r as never;
+        });
+      });
+      return { type: 'sdk' as const, name: ORCA_PROVIDER_NAME, instance: server };
+    },
+
     materialize: (ctx) => {
-      const tools: Array<{ name: string; description: string; shape: Record<string, unknown> }> = [];
+      const tools: Array<{ name: string; description: string; shape: z.ZodRawShape }> = [];
       // 用一次假的 register 把定义抓下来：工具定义只写一遍，
       // 具体怎么注册交给调用方。
       defineOrcaTools(host, ctx, (name, description, shape) => {

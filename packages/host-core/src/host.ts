@@ -405,3 +405,24 @@ export async function assertPiBinaryExists(binaryPath: string): Promise<void> {
 }
 
 export type { AgentKind };
+
+/** Claude Code CLI 路径（upstream 里有，和 pi-bin 同级） */
+export function resolveClaudeBinary(upstreamRepoRoot: string): string {
+  const exe = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const triple =
+    process.platform === 'darwin'
+      ? `darwin-${process.arch === 'arm64' ? 'arm64' : 'x64'}`
+      : process.platform === 'win32'
+        ? `win32-${process.arch === 'arm64' ? 'arm64' : 'x64'}`
+        : `linux-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
+  return path.join(upstreamRepoRoot, 'apps', 'claude-code-bin', triple, exe);
+}
+
+export async function fileExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}

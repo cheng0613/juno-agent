@@ -29,7 +29,10 @@ import {
   SqliteSessionStorage,
   TurnStore,
   assertPiBinaryExists,
+  createClaudeCodeAgent,
   createPiAgent,
+  fileExists,
+  resolveClaudeBinary,
   openDatabase,
   orcaWorkerSessionTitle,
   resolvePiBinary,
@@ -351,6 +354,8 @@ export class HostRuntime {
   private orca!: OrcaStore;
   /** ORCA 的 MCP 工具服务器（Lead 靠它派活） */
   private orcaTools: OrcaToolServer | null = null;
+  /** Claude Code 二进制是否就绪；决定 Lead 用哪个 harness */
+  private claudeAvailable = false;
   /**
    * token → 调用者身份。
    *
@@ -578,7 +583,39 @@ export class HostRuntime {
       },
     });
 
-    this.maker = new Maker({ agents: { pi: agent }, storage: this.storage, logger });
+    /*
+     * Lead 用 claude-code：只有它的 MCP 工具**直接进模型上下文**。
+     *
+     * pi 的 MCP 必须走 cindy_mcp_list_tools + cindy_mcp_call_tool 二段网关，
+     * 实测 deepseek 和 glm 都会编造工具名（发 mcp:orca:create_worker 这种
+     * 不存在的名字），请求永远到不了 handler。
+     * claude-code 上模型用的是标准 mcp__orca__create_worker，调用正确。
+     *
+     * 找不到二进制就降级 —— 宁可没有协同，也不要开不了 app。
+     */
+    const claudeBin = resolveClaudeBinary(this.cfg.upstreamRoot);
+    const hasClaude = await fileExists(claudeBin);
+    this.claudeAvailable = hasClaude;
+    const claudeAgent = hasClaude
+      ? createClaudeCodeAgent({
+          binaryPath: claudeBin,
+          model: this.cfg.model,
+          // claude CLI 自己拼 /v1/messages，所以这里**不能带 /v1**
+          endpoint: this.cfg.endpoint?.replace(/\/v1\/?$/, ''),
+          contextWindow: this.cfg.contextWindow,
+          logger: logger.child('claude'),
+          mcpProviders: [this.orcaProvider],
+        })
+      : null;
+    if (!hasClaude) {
+      logger.warn('找不到 Claude Code 二进制，Lead 将退回 pi（无法自主派活）', { claudeBin });
+    }
+
+    this.maker = new Maker({
+      agents: claudeAgent ? { pi: agent, 'claude-code': claudeAgent } : { pi: agent },
+      storage: this.storage,
+      logger,
+    });
     logger.info('host ready', {
       model: this.cfg.model,
       api: this.cfg.api,
@@ -749,6 +786,16 @@ export class HostRuntime {
     withOrcaTools: 'lead' | 'worker' | false = false,
     /** worker 模式下要绑定的 worker id（回报时用来标识来源） */
     workerIdForTools?: string,
+    /**
+     * 用哪个 harness。
+     *
+     * Lead 用 claude-code：只有它的 MCP 工具直接进模型上下文，
+     * 模型才能正确调用 create_worker。pi 的 MCP 要走二段网关，
+     * 实测模型会编造工具名。
+     *
+     * worker 仍用 pi：worker 只需要 send_to_lead，pi 更轻。
+     */
+    agentKind: 'pi' | 'claude-code' = 'pi',
   ): Promise<string> {
     /*
      * **自己先生成 sessionId**，而不是等 maker 返回。
@@ -773,7 +820,15 @@ export class HostRuntime {
      */
     const session = await this.maker.createSession({
       id: newSessionId,
-      agentKind: 'pi',
+      agentKind,
+      /*
+       * 显式给 'ask'，不交给 harness 默认值。
+       *
+       * 两个 harness 的默认行为不一样：pi 默认会问，claude-code 的 'default'
+       * 直接放行只读操作。不统一的话，用户换个 harness 权限行为就突然变了，
+       * 而界面上看不出为什么。
+       */
+      permissionMode: 'ask',
       workingDir: workingDir ?? this.cfg.workDir,
       model: model ?? this.cfg.model,
       title,
@@ -784,6 +839,26 @@ export class HostRuntime {
     return session.id;
   }
 
+  /**
+   * 建一个 Lead 会话（用户新建的会话就是 Lead）。
+   *
+   * 用 claude-code 而不是 pi：只有 claude-code 的 MCP 工具直接进模型上下文，
+   * 模型才能正确调用 create_worker。pi 的 MCP 走二段网关，实测模型会编造
+   * 工具名（发 mcp:orca:create_worker 这种不存在的名字）。
+   *
+   * 二进制不在时降级到 pi —— 至少能聊天，只是不会自主派活。
+   */
+  async createLeadSession(title = '新会话'): Promise<string> {
+    return this.createSession(
+      title,
+      undefined,
+      undefined,
+      'lead',
+      undefined,
+      this.claudeAvailable ? 'claude-code' : 'pi',
+    );
+  }
+
   async ensureSession(): Promise<string> {
     // 已经有活着的会话就直接复用（启动时 bootstrap 会调到这里）
     const alive = this.sessions.values().next();
@@ -792,8 +867,15 @@ export class HostRuntime {
     if (existing.length > 0) {
       return await this.resume(existing[0]!.id);
     }
-    // 用户新建的会话就是 Lead：给它派活工具
-    return await this.createSession('新会话', undefined, undefined, 'lead');
+    // 用户新建的会话就是 Lead：用 claude-code 建，它能看到派活工具
+    return await this.createSession(
+      '新会话',
+      undefined,
+      undefined,
+      'lead',
+      undefined,
+      this.claudeAvailable ? 'claude-code' : 'pi',
+    );
   }
 
   /**
@@ -2195,6 +2277,29 @@ export class HostRuntime {
       .prepare('SELECT working_dir FROM orca_workers WHERE id = ?')
       .get(workerId) as { working_dir: string | null } | undefined;
     return row?.working_dir ?? null;
+  }
+
+  /** 验收用：当前会话是否支持 sessionTree（分支面板） */
+  supportsSessionTree(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return false;
+    const caps = (session as unknown as { capabilities?: { sessionTree?: { supported?: boolean } } })
+      .capabilities;
+    return caps?.sessionTree?.supported === true;
+  }
+
+  /** 验收用：只回滚文件到第 N 轮（不走会话树，跨 harness 都能用） */
+  async rewindFiles(
+    sessionId: string,
+    turnIndex: number,
+  ): Promise<{ filesRestored: boolean; reason?: string }> {
+    const commit = this.savepointByTurnIndex(sessionId, turnIndex);
+    if (!commit) return { filesRestored: false, reason: '没有该轮的文件快照' };
+    const meta = await this.storage.get(sessionId);
+    if (!meta) return { filesRestored: false, reason: '会话不存在' };
+    const { restoreSavepoint } = await import('./gitSavepoint.js');
+    const r = await restoreSavepoint(meta.workDir, commit);
+    return { filesRestored: r.ok, ...(r.reason ? { reason: r.reason } : {}) };
   }
 
   /** 验收用：直接推一条错误事件（模拟上游报错，不用真的打坏 key） */

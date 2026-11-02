@@ -543,3 +543,46 @@ ANTHROPIC_API_KEY=<tokenhub 的 key>
 ```
 
 实测返回：「你好！有什么可以帮你的吗？」
+
+---
+
+## 十四、【验证通过】claude-code 上模型会正确调用 MCP 工具
+
+这是最后一块拼图。实测：
+
+```
+[TOOL_USE] {"toolName":"ToolSearch","input":{"query":"select:mcp__spike_tools__echo_marker"}}
+[TOOL_USE] {"toolName":"mcp__spike_tools__echo_marker","input":{"text":"hello"}}
+[审批] toolName=mcp__spike_tools__echo_marker
+```
+
+**模型用的是标准 MCP 名字 `mcp__<server>__<tool>`，没有编造。**
+
+对照 pi 那边卡了三轮的现象（模型发 `mcp:orca:create_worker` 这种不存在的名字）：
+
+| | pi | claude-code |
+|---|---|---|
+| 工具可见性 | 藏在 list_tools/call_tool 二段网关 | **直接进上下文** |
+| 模型行为 | 编造工具名，请求打不到 handler | **正确调用** |
+| 需要改写代理 | — | **不需要** |
+
+### 顺带发现一个设计
+
+Claude CLI 会先用 `ToolSearch` 工具"选中"目标工具
+（`{"query":"select:mcp__spike_tools__echo_marker"}`），然后才调用。
+这是它自己的延迟加载机制，不影响正确性。
+
+### 审批监听器必须挂
+
+不挂 `setInteractionListener` 的话，工具调用会被**默认拒绝**：
+
+```
+interaction request received but no listener attached, denying
+```
+
+返回格式是 `{ kind: 'permission', behavior: 'allow' }`。
+
+### 最终结论
+
+**ORCA 在 claude-code 上完全可行，成本约 1 天。**
+pi 保持现状（手动派活），不强行改。

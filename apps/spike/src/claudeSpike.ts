@@ -93,7 +93,16 @@ async function main(): Promise<void> {
   });
   log('会话已建', session.id);
 
-  session.onEvent((e: { type: string; data?: unknown }) => {
+  // 必须有审批监听器：没挂的话工具调用会被默认拒绝（deny），看不到结果
+  session.setInteractionListener?.((req: unknown) => {
+    log('审批请求', JSON.stringify(req).slice(0, 160));
+    return { kind: 'permission', behavior: 'allow' };
+  });
+
+  session.onEvent((e: { type: string; text?: string; isFinal?: boolean; data?: unknown }) => {
+    if (e.type === 'text') log('TEXT', JSON.stringify(e.text?.slice(0, 120)), 'final=' + e.isFinal);
+    if (e.type === 'tool_use') log('TOOL_USE', JSON.stringify(e.data).slice(0, 150));
+    if (e.type === 'tool_result') log('TOOL_RESULT', JSON.stringify(e.data).slice(0, 150));
     if (e.type === 'error') log('错误事件', JSON.stringify(e.data).slice(0, 300));
   });
 
