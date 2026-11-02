@@ -93,6 +93,7 @@ export function PlusMenu({ items }: { items: PlusMenuItem[] }) {
               role="menuitem"
               className={`plus-item${item.active ? ' active' : ''}`}
               disabled={item.disabled}
+              title={item.hint}
               onClick={() => {
                 setOpen(false);
                 item.onClick();

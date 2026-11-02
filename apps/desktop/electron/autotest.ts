@@ -682,21 +682,43 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
 
   try {
     await delay(2200);
-    const boot = await win.webContents.executeJavaScript('window.host.createSession()');
-    const sessionId: string = boot.activeSessionId;
+    /*
+     * 走 bootstrap 拿已有会话，不调 window.host.createSession() ——
+     * 那个只建宿主侧会话，React 的 activeId 不更新，界面上还是空的，
+     * 按钮全是禁用态（这个坑记了三次）。
+     */
+    const sessionId: string = await win.webContents.executeJavaScript(
+      `window.host.bootstrap().then((r) => r.activeSessionId)`,
+    );
     note(`新会话 ${sessionId}`);
 
-    // 先真实发一条（走 textarea + Enter，跟 queue 测试同一套）——
-    // 直接调 window.host.send 不经过 React，messages 还是空的，
-    // 而按钮在空会话上是禁用的（不给用户白点一次的地方）
+    // 等界面就绪（按钮区渲染是异步的）
+    for (let i = 0; i < 40; i += 1) {
+      const ok = await win.webContents.executeJavaScript(
+        `!!document.querySelector('textarea') && !!document.querySelector('[data-testid="plus-menu-trigger"]')`,
+      );
+      if (ok) break;
+      await delay(250);
+    }
+
+    /*
+     * 先发一条消息 —— 空会话上压缩按钮是禁用的，
+     * 不给用户白点一次的地方。
+     * 点发送按钮而不是合成 Enter：后者在 React 受控组件上不可靠。
+     */
     await win.webContents.executeJavaScript(`
-      (() => {
+      (async () => {
         const ta = document.querySelector('textarea');
+        if (!ta) return 'no-textarea';
         const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
         setter.call(ta, '用一句话介绍你自己');
         ta.dispatchEvent(new Event('input', { bubbles: true }));
-        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        return 'ok';
+        for (let i = 0; i < 25; i += 1) {
+          const b = document.querySelector('[data-testid="send"]');
+          if (b && !b.disabled) { b.click(); return 'ok'; }
+          await new Promise((r) => setTimeout(r, 80));
+        }
+        return 'send-disabled';
       })()
     `);
     await waitFor(() => turnsDone >= 1, 120_000, '第一轮结束');
@@ -712,6 +734,7 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
      */
     if (clicked === 'unsupported') {
       note('当前 harness 不支持手动压缩，按钮已正确禁用，跳过');
+      note('完成');
       return;
     }
     if (clicked !== 'ok') throw new Error(`压缩按钮不可用: ${clicked}`);
@@ -1470,13 +1493,35 @@ export async function runExportTest(win: BrowserWindow, runtime: HostRuntime): P
     await waitFor(() => turnsDone >= 1, 120_000, '第一轮结束');
     await delay(800);
 
+    /*
+     * 导出按钮已进「+」菜单。走菜单路径，并区分三种结果：
+     *   ok          —— 点了
+     *   unsupported —— 当前 harness 没声明 sessionHtmlExport（claude 就是）
+     *   disabled    —— 其它原因暂时不可点
+     * unsupported 是**正确行为**，跳过而不是报错。
+     */
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="plus-menu-trigger"]')?.click()`,
+    );
+    await delay(400);
     const btnState = await win.webContents.executeJavaScript(
       `(() => {
-         const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('导出'));
-         return b ? (b.disabled ? 'disabled' : 'ok') : 'missing';
+         const b = document.querySelector('[data-testid="plus-export"]');
+         if (!b) return 'missing';
+         if (b.disabled) {
+           const hint = b.querySelector('.plus-item-hint')?.textContent ?? '';
+           return hint.includes('不支持') ? 'unsupported' : 'disabled';
+         }
+         b.click();
+         return 'ok';
        })()`,
     );
     note(`导出按钮状态: ${btnState}`);
+    if (btnState === 'unsupported') {
+      note('当前 harness 不支持导出，按钮已正确禁用，跳过');
+      note('完成');
+      return;
+    }
     if (btnState !== 'ok') throw new Error(`导出按钮不可用: ${btnState}`);
 
     const clicked = await win.webContents.executeJavaScript(
@@ -2255,6 +2300,7 @@ export async function runRewindTest(win: BrowserWindow, runtime: HostRuntime): P
         throw new Error(`文件内容没回到 ORIGINAL，实际: ${JSON.stringify(after)}`);
       }
       note('文件回滚验证通过');
+      note('完成');
       return;
     }
 
