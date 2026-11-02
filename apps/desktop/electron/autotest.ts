@@ -4695,3 +4695,162 @@ export async function runErrorDiagnosisTest(win: BrowserWindow, runtime: HostRun
     app.quit();
   }
 }
+
+
+/**
+ * ORCA 全流程演示（不是断言测试，是给人看的）
+ *
+ * 任务：让 Lead 建 3 个 worker，各写一个文件，各自回报，Lead 汇总。
+ * 每一步都截图，能直接看到「谁在干什么」。
+ */
+export async function runOrcaDemoTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (m: string) => console.log('[demo] ' + m);
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+
+  try {
+    await delay(2500);
+    const leadId = await runtime.ensureSession();
+    note('Lead 会话: ' + leadId.slice(0, 8));
+
+    // 准备一个干净的 git 仓库给 worker 用
+    const repo = (await runtime.debugSessionMeta(leadId)).workDir;
+    await fs.mkdir(repo, { recursive: true });
+    await execAsync('git', ['init', '-q'], { cwd: repo }).catch(() => undefined);
+    await fs.writeFile(path.join(repo, 'README.md'), '# demo\n', 'utf8');
+    await execAsync('git', ['add', '-A'], { cwd: repo });
+    await execAsync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'], { cwd: repo }).catch(() => undefined);
+
+    await shootTo(win, '70-demo-start');
+
+    /* ---- 第 1 步：让 Lead 自己建 worker ---- */
+    const prompt =
+      '请用 create_worker 工具创建 3 个 worker，角色分别是 developer、tester、reviewer。' +
+      '然后用 list_workers 确认，把结果告诉我。不要自己做别的事。';
+    note('派给 Lead: ' + prompt);
+    await runtime.send(leadId, prompt);
+
+    // 等 worker 出现
+    let workers = runtime.listWorkers(leadId);
+    for (let i = 0; i < 60 && workers.length < 3; i += 1) {
+      await delay(2000);
+      workers = runtime.listWorkers(leadId);
+      if (i % 10 === 0 && i > 0) note('等待中… 已有 ' + workers.length + ' 个 worker');
+    }
+    note('Lead 建出 ' + workers.length + ' 个 worker: ' + workers.map((w) => w.role + '/' + w.label).join(', '));
+    await shootTo(win, '71-demo-workers-created');
+
+    if (workers.length < 3) throw new Error('Lead 没能自主建出 3 个 worker（实际 ' + workers.length + ' 个）');
+
+    /* ---- 第 2 步：给每个 worker 派活（并行） ---- */
+    const tasks = [
+      '创建文件 hello.txt，内容写 "来自 developer"',
+      '创建文件 test.txt，内容写 "来自 tester"',
+      '创建文件 review.txt，内容写 "来自 reviewer"',
+    ];
+    note('并行派活给 3 个 worker…');
+    for (let i = 0; i < workers.length; i += 1) {
+      await runtime.sendToWorker(workers[i]!.id, tasks[i]! + '。干完用 send_to_lead 汇报。');
+    }
+    await delay(3000);
+    await shootTo(win, '72-demo-workers-running');
+
+    /* ---- 第 3 步：等它们干完 ---- */
+    let done = 0;
+    for (let i = 0; i < 90; i += 1) {
+      await delay(2000);
+      const now = runtime.listWorkers(leadId);
+      const doneNow = now.filter((w) => w.status === 'done').length;
+      if (doneNow !== done) {
+        done = doneNow;
+        note('完成进度: ' + done + '/' + now.length);
+      }
+      if (done >= now.length && now.length > 0) break;
+    }
+    await shootTo(win, '73-demo-workers-done');
+
+    /* ---- 第 4 步：验证文件真的产生了（各在自己的 worktree） ---- */
+    for (const w of runtime.listWorkers(leadId)) {
+      const dir = runtime.workerWorkingDir(w.id);
+      const fresh = await runtime.debugSessionMeta(w.sessionId);
+      note('worker ' + w.label + ' 目录: ' + (dir ?? fresh.workDir));
+    }
+
+    /* ---- 第 5 步：Lead 汇总 ---- */
+    await runtime.send(leadId, '用 list_workers 看一下 3 个 worker 的最终状态，汇总告诉我。');
+    await delay(8000);
+    await shootTo(win, '74-demo-lead-summary');
+
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-demo-failed').catch(() => undefined);
+  } finally {
+    await delay(500);
+    app.quit();
+  }
+}
+
+
+/**
+ * 验收：跑着的会话，新建会话时不能把「正在处理…」带过去。
+ *
+ * 实测踩到：A 在跑 Bash，点新建，B 的页面上也显示「正在处理… 正在用 Bash…」——
+ * 状态行是会话级的，切/新建必须清。
+ */
+export async function runStatusLeakTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (m: string) => console.log('[leak] ' + m);
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+  try {
+    await delay(2500);
+    const a = await runtime.ensureSession();
+    note('A: ' + a.slice(0, 8));
+
+    // 让 A 跑一个耗时的命令
+    await runtime.send(a, '用 bash 跑 sleep 8，然后回答 ok');
+    // 等状态行出现
+    let seen = false;
+    for (let i = 0; i < 30; i += 1) {
+      await delay(500);
+      seen = await js(`!!document.querySelector('[data-testid="status-line"]')`);
+      if (seen) break;
+    }
+    note('A 的状态行出现: ' + seen);
+    if (!seen) throw new Error('A 没出现状态行，无法验证');
+
+    // A 还在跑的时候建 B
+    const b = await js(
+      `window.host.createSession('pi').then((r) => r.activeSessionId)`,
+    );
+    note('B: ' + String(b).slice(0, 8));
+    await delay(1500);
+
+    /*
+     * 切到 B（点侧栏）。
+     * 但 React 还不知道 B 存在 —— 用 IPC 建的会话不进 React 列表。
+     * 点一下「新建」会触发列表刷新（空会话去重分支里也刷）。
+     */
+    await js(`document.querySelector('[data-testid="nav-new"]')?.click()`);
+    await delay(1500);
+    const cards = await js(
+      `[...document.querySelectorAll('[data-session-id]')].map((e) => e.dataset.sessionId)`,
+    );
+    note('侧栏会话数: ' + (Array.isArray(cards) ? cards.length : 0));
+    await js(`document.querySelector('[data-session-id="${b}"] button')?.click()`);
+    await delay(1500);
+
+    const title = await js(`document.querySelector('.topbar-title')?.textContent ?? '(无)'`);
+    const activeCard = await js(`document.querySelector('[data-testid="session-card"].is-active')?.closest('[data-session-id]')?.dataset.sessionId ?? '(无)'`);
+    const leaked = await js(`!!document.querySelector('[data-testid="status-line"]')`);
+    const liveLeaked = await js(`!!document.querySelector('.bubble-ai.streaming')`);
+    note('B 上有状态行: ' + leaked + ' / 有流式气泡: ' + liveLeaked);
+    if (leaked) throw new Error('B 上看到了 A 的状态行 —— 状态串台了');
+    if (liveLeaked) throw new Error('B 上看到了 A 的流式气泡');
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-status-leak-failed').catch(() => undefined);
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}

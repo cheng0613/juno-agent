@@ -866,6 +866,15 @@ export function App() {
 
   const switchSession = async (id: string) => {
     if (id === activeId) return;
+    /*
+     * **先改 ref，再拉数据**。
+     *
+     * activeRef 是事件路由的唯一依据，而 setActiveId 要等下次渲染才生效。
+     * 中间那段窗口里，旧会话的 status/text 事件仍会被当成「当前的」——
+     * 实测表现是切到新会话还看到上一个会话的「正在处理…」。
+     */
+    activeRef.current = id;
+    setTurnStatus(null);
     const rows = await host.loadSession(id);
     setActiveId(id);
     setMessages(rows);
@@ -880,6 +889,12 @@ export function App() {
     setDiffOpen(false);
     // 子任务也属于上一会话
     setTasks([]);
+    /*
+     * 状态行（「正在处理…」「正在用 Bash…」）也是会话级的。
+     * 不清的话，切到一个空闲会话还会看到上一个会话的进度，
+     * 甚至新建的页面也在转圈 —— 实测踩到。
+     */
+    setTurnStatus(null);
     void host.contextUsage(id).then(setUsage);
     void host.readModes(id).then(setModes);
     // 切会话时引擎也会变 —— 模型下拉的值带引擎，不更新会定位到错的行
@@ -1141,6 +1156,13 @@ export function App() {
     }
 
     const boot = await host.createSession(agentKind);
+    /*
+     * 立刻改 ref：新建之后到 React 渲染之间有个窗口期，
+     * 旧会话的 status 事件会被当成「当前会话的」而上屏。
+     * 实测表现是新建的页面也在显示「正在处理… 正在用 Bash…」。
+     */
+    activeRef.current = boot.activeSessionId;
+    setTurnStatus(null);
     setSessions(boot.sessions);
     setActiveId(boot.activeSessionId);
     setMessages(boot.messages);
@@ -1149,6 +1171,10 @@ export function App() {
     setTurnDiff(null);
     setDiffOpen(false);
     setTasks([]);
+    // 状态行/流式文字也是会话级的 —— 不清就会看到上一个会话的「正在处理…」
+    setTurnStatus(null);
+    setLiveText('');
+    liveRef.current = '';
     setExtraDirs({ read: [], write: [] });
     setDirsOpen(false);
     setTree([]);

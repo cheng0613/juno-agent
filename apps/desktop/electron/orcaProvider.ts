@@ -246,14 +246,22 @@ export function createOrcaProvider(host: OrcaProviderHost): McpProvider & {
      * 第 3 条很关键：不筛的话每个聊天都顶着一堆协同工具，
      * 模型会误以为用户想派活，还没等用户开口就去建 worker。
      */
+    /*
+     * 所有非 worker 会话都挂。
+     *
+     * 之前我按「有没有 team」筛，想避免普通聊天也顶着协同工具。
+     * 但那是个**死锁**：新会话还没 team，工具就挂不上，
+     * Lead 就永远建不出第一个 worker —— 实测模型直接回答
+     * 「没有 create_worker 这个工具」。
+     *
+     * 现在的判断：只排除 worker（它只要 send_to_lead），
+     * 其余都挂。代价是普通聊天也能看到 create_worker，
+     * 但这比「想用的时候用不了」好得多 —— 而且工具描述里写清了
+     * 「什么时候该用」，模型不会无故派活。
+     */
     isEnabled: (ctx) => {
       const caller = callerOf(ctx);
-      if (!caller?.sessionId) return false;
-      // worker 认领身份：这个会话是不是某个 lead 的 worker
-      if (host.workerOf(caller.sessionId)) return true;
-      // lead 认领：这个会话有没有开过协同（有过 team）
-      // host 提供 hasTeam 而不是直接查库 —— provider 不该知道存储细节
-      return host.hasTeamForLead(caller.sessionId);
+      return Boolean(caller?.sessionId);
     },
 
     /*
