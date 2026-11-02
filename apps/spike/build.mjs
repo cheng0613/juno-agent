@@ -38,6 +38,7 @@ await build({
     probeImage: 'src/probeImage.ts',
     benchParallel: 'src/benchParallel.ts',
     spikeMcp: 'src/spikeMcp.ts',
+    claudeSpike: 'src/claudeSpike.ts',
   },
   bundle: true,
   platform: 'node',

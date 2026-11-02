@@ -361,3 +361,85 @@ pi 的架构里**没有旁路**：任何 MCP server 进 pi 都要过网关。
 - 或接受「模型必须走 cindy_mcp_call_tool」这个现实，用提示词引导（试过，两个模型都不听）
 
 **当前 McpProvider 改造已提交（代码更好，但没解决核心问题）。**
+
+---
+
+## 十二、接 claude-code 的探路结果（未完成）
+
+### 好消息：CLI 能跑，链路能通
+
+`claude.exe`（upstream 里有，v2.1.296，260MB）在本地能启动，用 sniffer 代理验证过：
+
+```
+POST /v1/messages?beta=true   ← CLI 真的发请求了
+收到                          ← 模型返回
+```
+
+**缺的两个必需环境变量**（Cindy 在 `env-builder.ts` 里设的）：
+
+```bash
+CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1
+CLAUDE_CODE_ENTRYPOINT=claude-desktop
+```
+
+不设这两个，CLI 会在本地静默退出，**一个请求都不发**——这个现象很难查
+（没有任何错误输出）。
+
+### 坏消息：模型名对不上
+
+CLI 有**本地模型白名单**，只认 `claude-*` 或目录里的别名：
+
+```
+deepseek-v4.1-flash-1017 → [claude-code:unrecognized_model] 直接拒绝，不发请求
+claude-sonnet-4-5        → 同上
+sonnet                   → 通过 CLI 校验，但端点返回 400（tokenhub 不认这个 ID）
+```
+
+而 tokenhub 的 Anthropic 端点**接受 `deepseek-v4.1-flash-1017`**
+（直接 curl `/v1/messages` 返回 200）。
+
+**两边对不上**：CLI 只认 `sonnet`，端点只认 `deepseek-v4.1-flash-1017`。
+
+### 可能的解法：宿主做模型名改写
+
+CLI 发 `sonnet` → 宿主代理改写 body 里的 `model` → 转发到 tokenhub。
+
+试到这一步时代理实现有个 undici 报错（fetch 失败），还没排查完。
+
+**这条路是通的**（sniffer 已验证 CLI 会发请求、会读响应），
+只差一个能正常工作的改写代理。
+
+### 成本重估
+
+| 项 | 估算 |
+|---|---|
+| 改写代理 | 2 小时（含调试） |
+| 接进 hostRuntime（替换 pi 做 lead） | 半天 |
+| ORCA 工具走 `toClaudeSdkConfig` | 半天 |
+| 回归 + 验收 | 半天 |
+| **合计** | **约 2 天** |
+
+### 风险
+
+1. **CLI 版本升级可能改校验规则** —— 现在靠的是 `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`
+   这个内部 flag，不是稳定 API
+2. **`sonnet` 别名会被 CLI 当成真 Claude** —— 它可能给模型加 Claude 专属的
+   系统提示（比如「你是 Claude」），行为上和 deepseek 混用会怪
+3. **260MB 的二进制** —— 安装包会变大（比现在多一倍）
+
+### 建议
+
+**先不做。** 理由：
+
+- pi 上手动派活已经能用，覆盖了大部分场景
+- 改写代理是个 hack，CLI 升级就可能失效
+- 2 天投入换来的是「模型能自主派活」，但**还没验证 deepseek 在 CLI 里
+  会不会也编造工具名**（那是当初卡住的原问题）
+
+如果要做，**先花 1 小时验证第 2 点**：接好代理后，让模型列工具，
+看它能不能正确看到 ORCA 工具。如果模型照样编名字，那 2 天也白花。
+
+### 已完成的部分（已提交）
+
+- `createClaudeCodeAgent` 在 host-core 里（能起会话，能到模型这一层）
+- ORCA 改成 `McpProvider`（跨 harness 可复用，虽然目前只有 pi 在用）

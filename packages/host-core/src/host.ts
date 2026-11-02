@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 
 import {
+  ClaudeCodeAgent,
   createConsoleLogger,
   PiAgent,
   type AgentDeps,
@@ -276,6 +277,83 @@ export function createPiAgent(opts: PiHostOptions): PiAgent {
   };
 
   return new PiAgent(deps);
+}
+
+/* ------------------------------------------------------------------ *
+ * Claude Code 装配
+ * ------------------------------------------------------------------ */
+
+export interface ClaudeHostOptions {
+  /** Claude Code CLI 绝对路径（如 upstream 里的 apps/claude-code-bin/win32-x64/claude.exe） */
+  binaryPath: string;
+  /** 默认模型 id */
+  model: string;
+  /**
+   * Anthropic 协议端点。
+   *
+   * 注意：不是 openai-completions 那个 —— Claude CLI 只认 `/v1/messages`。
+   * 实测腾讯 tokenhub 同时支持两种协议，所以同一个 key 两边都能用。
+   */
+  endpoint?: string;
+  /** 上下文窗口 */
+  contextWindow?: number;
+  /** 额外可切换的模型 */
+  extraModels?: readonly { id: string; label?: string; contextWindow?: number }[];
+  /** 工作目录外的额外可写目录 */
+  logger?: Logger;
+  /** 同上：ORCA 等能力的 MCP 提供者 */
+  mcpProviders?: McpProvider[];
+}
+
+/**
+ * 造一个 Claude Code agent。
+ *
+ * 为什么要它：pi 的 MCP 工具一律藏在二段网关后面，模型看不到
+ * `create_worker`，ORCA 的「Lead 自主派活」在 pi 上跑不通。
+ * Claude Code 是直连 MCP（`toClaudeSdkConfig` 返回 in-process server），
+ * 工具直接进模型视野。
+ */
+export function createClaudeCodeAgent(opts: ClaudeHostOptions): ClaudeCodeAgent {
+  const logger = opts.logger ?? createConsoleLogger('claude');
+
+  const deps: AgentDeps = {
+    auth: createEnvAuthAdapter({
+      // Claude CLI 直接读 ANTHROPIC_API_KEY；其它名字是兼容写的
+      apiKeyEnvNames: ['APP_PI_API_KEY', 'SPIKE_PI_API_KEY', 'ANTHROPIC_API_KEY'],
+      targetEnvKey: 'ANTHROPIC_API_KEY',
+    }),
+    runtimeConfig: {
+      endpoint: opts.endpoint,
+      autoCompactThresholdPct: 85,
+    },
+    binaryPath: opts.binaryPath,
+    logger,
+    capabilityAdditions: {
+      // ModelDescriptor 要有 displayName / efforts / defaultEffort；
+      // efforts 给空数组 = 不支持档位切换（Claude 的档位由 SDK 自己管）
+      availableModels: [
+        {
+          id: opts.model,
+          displayName: opts.model,
+          contextWindow: opts.contextWindow ?? 200_000,
+          efforts: [] as const,
+          defaultEffort: null,
+        },
+        ...(opts.extraModels ?? []).map((m) => ({
+          id: m.id,
+          displayName: m.label ?? m.id,
+          contextWindow: m.contextWindow ?? opts.contextWindow ?? 200_000,
+          efforts: [] as const,
+          defaultEffort: null,
+        })),
+      ],
+    },
+    resolveModelContextLimit: () => opts.contextWindow ?? 200_000,
+    resolveModelCompactionPct: () => null,
+    ...(opts.mcpProviders ? { mcpProviders: opts.mcpProviders } : {}),
+  };
+
+  return new ClaudeCodeAgent(deps);
 }
 
 /* ------------------------------------------------------------------ *
