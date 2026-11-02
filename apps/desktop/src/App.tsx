@@ -1345,7 +1345,8 @@ export function App() {
                     id: 'branch',
                     label: '对话分支',
                     icon: PLUS_ICONS.branch,
-                    disabled: !activeId,
+                    disabled: !activeId || !modes.features.sessionTree,
+                    hint: !modes.features.sessionTree ? '当前 harness 不支持' : undefined,
                     onClick: () => {
                       const next = !treeOpen;
                       setTreeOpen(next);
@@ -1381,16 +1382,33 @@ export function App() {
                     id: 'export',
                     label: '导出对话',
                     icon: PLUS_ICONS.export,
-                    disabled: !activeId || messages.length === 0 || exporting,
-                    hint: exporting ? '导出中…' : undefined,
+                    disabled:
+                      !activeId ||
+                      messages.length === 0 ||
+                      exporting ||
+                      !modes.features.exportHtml,
+                    hint: exporting
+                      ? '导出中…'
+                      : !modes.features.exportHtml
+                        ? '当前 harness 不支持'
+                        : undefined,
                     onClick: () => void exportHtml(),
                   },
                   {
                     id: 'compact',
                     label: '压缩上下文',
                     icon: PLUS_ICONS.compact,
-                    disabled: !activeId || running || compacting || messages.length === 0,
-                    hint: compacting ? '压缩中…' : undefined,
+                    disabled:
+                      !activeId ||
+                      running ||
+                      compacting ||
+                      messages.length === 0 ||
+                      !modes.features.manualCompact,
+                    hint: compacting
+                      ? '压缩中…'
+                      : !modes.features.manualCompact
+                        ? '当前 harness 不支持'
+                        : undefined,
                     onClick: () => void compactNow(),
                   },
                 ]}

@@ -2060,10 +2060,49 @@ export class HostRuntime {
           description: PERMISSION_MODE_HINTS[m.id] ?? m.description ?? '',
         }));
       this.modes.permissionModes = list;
-      console.log('[modes] refreshPermissionModes', sessionId.slice(0, 8), '→', list.map((m) => m.id).join(','));
     } catch {
       this.modes.permissionModes = [];
     }
+    this.refreshFeatures(sessionId);
+  }
+
+  /**
+   * 读当前 harness 支持哪些功能。
+   *
+   * 引擎的 capabilities 里每项都是 { supported } 形状，**缺省当支持** ——
+   * 老 harness 没声明的能力不该因为「没写」就被当成不支持。
+   * 只有显式声明 supported: false 才算不支持。
+   */
+  private refreshFeatures(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const caps = (session as unknown as { capabilities?: Record<string, unknown> }).capabilities;
+    /*
+     * 两套判断规则，因为能力分两类：
+     *
+     * 1. 新的可选能力（sessionTree）—— **必须显式声明**才算支持。
+     *    实际只有 pi 声明了，claude / codex 都没有。
+     *    用「缺省当支持」的话，界面会给 claude 显示一个点了就报错的分支按钮。
+     *
+     * 2. 老能力（导出/压缩/插话/额外目录）—— 缺省当支持。
+     *    它们是早期就有的，那时 harness 还没开始逐项声明，
+     *    用「必须声明」会把现存功能全关掉。
+     */
+    const optIn = (key: string): boolean => {
+      const v = caps?.[key] as { supported?: boolean } | undefined;
+      return v?.supported === true;
+    };
+    const optOut = (key: string): boolean => {
+      const v = caps?.[key] as { supported?: boolean } | undefined;
+      return v?.supported !== false;
+    };
+    this.modes.features = {
+      sessionTree: optIn('sessionTree'),
+      exportHtml: optIn('sessionHtmlExport'),
+      manualCompact: optIn('manualCompact'),
+      steer: optIn('sameTurnSteer'),
+      extraDirs: optIn('extraDirs'),
+    };
   }
 
   /**

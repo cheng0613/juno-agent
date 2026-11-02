@@ -649,16 +649,31 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
     }
   };
 
-  const clickCompact = () =>
-    win.webContents.executeJavaScript(
+  /**
+   * 点压缩。按钮已进输入框左下角的「+」菜单，不再挂在底线工具栏。
+   *
+   * 返回 'unsupported' 表示当前 harness 不支持这个功能 —— 那是**正确行为**，
+   * 不是失败。测试据此跳过而不是报错。
+   */
+  const clickCompact = async (): Promise<string> => {
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="plus-menu-trigger"]')?.click()`,
+    );
+    await delay(400);
+    const r = await win.webContents.executeJavaScript(
       `(() => {
-         const b = [...document.querySelectorAll('.bar-action')].find(x => x.textContent.includes('压缩'));
+         const b = document.querySelector('[data-testid="plus-compact"]');
          if (!b) return 'no-btn';
-         if (b.disabled) return 'disabled';
+         if (b.disabled) {
+           // 区分「不支持」和「暂时不可用」：不支持的 hint 是固定文案
+           return (b.title || '').includes('不支持') ? 'unsupported' : 'disabled';
+         }
          b.click();
          return 'ok';
        })()`,
     );
+    return r;
+  };
 
   const noticeText = () =>
     win.webContents.executeJavaScript(
@@ -690,6 +705,15 @@ export async function runCompactTest(win: BrowserWindow, runtime: HostRuntime): 
     /* ---- 甲、noop 路径 ---- */
     const clicked = await clickCompact();
     note(`点击压缩: ${clicked}`);
+    /*
+     * 'unsupported' 是**正确行为**，不是失败 ——
+     * claude-code 没声明 manualCompact，界面就该把按钮禁掉，
+     * 而不是让用户点了才报 NotSupportedError。
+     */
+    if (clicked === 'unsupported') {
+      note('当前 harness 不支持手动压缩，按钮已正确禁用，跳过');
+      return;
+    }
     if (clicked !== 'ok') throw new Error(`压缩按钮不可用: ${clicked}`);
 
     // 压缩要调模型生成摘要；noop 通常很快，但提示条 3.5 秒后会自动消失，
@@ -1097,6 +1121,20 @@ export async function runModeTest(win: BrowserWindow, runtime: HostRuntime): Pro
     );
     note(`会话 ${sessionId}`);
     const caps = await runtime.readModes(sessionId);
+    // 打开 + 菜单，确认不支持的功能被禁用
+    await win.webContents.executeJavaScript(`document.querySelector('[data-testid="plus-menu-trigger"]')?.click()`);
+    await delay(400);
+    const feat = await win.webContents.executeJavaScript(
+      `(() => ({
+         exportDisabled: document.querySelector('[data-testid="plus-export"]')?.disabled ?? 'missing',
+         compactDisabled: document.querySelector('[data-testid="plus-compact"]')?.disabled ?? 'missing',
+         branchDisabled: document.querySelector('[data-testid="plus-branch"]')?.disabled ?? 'missing',
+       }))()`,
+    );
+    note('功能禁用状态: ' + JSON.stringify(feat));
+    note('harness: ' + (runtime.debugCapabilities(sessionId).sessionTree ?? '?'));
+    await win.webContents.executeJavaScript(`document.querySelector('[data-testid="plus-menu-trigger"]')?.click()`);
+
     note('权限档位: ' + JSON.stringify(caps.permissionModes.map((m) => m.id)));
 
     /*
