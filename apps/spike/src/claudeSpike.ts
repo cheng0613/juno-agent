@@ -9,6 +9,8 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 
 import { createConsoleLogger, Maker, type Logger } from '@cindy/maker-core';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
 import {
   createClaudeCodeAgent,
@@ -21,7 +23,7 @@ const UPSTREAM = process.env.UPSTREAM_ROOT ?? 'C:/Users/chiaki/Desktop/agent/ups
 const DATA_DIR = process.env.APP_DATA_DIR ?? path.join(process.cwd(), '.claude-spike');
 const KEY = process.env.APP_PI_API_KEY ?? '';
 const MODEL = process.env.APP_MODEL ?? 'deepseek-v4.1-flash-1017';
-const ENDPOINT = process.env.APP_ENDPOINT ?? 'https://tokenhub.tencentmaas.com/v1';
+const ENDPOINT = process.env.APP_ENDPOINT ?? "https://tokenhub.tencentmaas.com";
 
 const log = (msg: string, data?: unknown) => console.log(`[claude-spike] ${msg}`, data ?? '');
 
@@ -52,12 +54,21 @@ async function main(): Promise<void> {
   });
   log('二进制', binaryPath);
 
-  // 关键：给 agent 一个最简单的 MCP provider，验证工具会不会直接暴露给模型
+  /*
+   * 关键验证：挂一个 in-process MCP server，看模型能不能直接用工具名调用。
+   * 如果能看到并调用，说明 ORCA 在 claude-code 上跑得通（pi 上是看不到的）。
+   */
   const testProvider = {
     name: 'spike_tools',
     capability: { title: '测试工具', description: 'spike 用', source: 'builtin' as const },
     isEnabled: () => true,
-    toClaudeSdkConfig: () => null, // 先不挂，只验证 CLI 能跑
+    toClaudeSdkConfig: () => {
+      const server = new McpServer({ name: 'spike_tools', version: '0.1.0' });
+      server.tool('echo_marker', '把输入原样返回，前面加 MARKER_', { text: z.string() }, async ({ text }) => ({
+        content: [{ type: 'text' as const, text: `MARKER_${text}` }],
+      }));
+      return { type: 'sdk' as const, name: 'spike_tools', instance: server };
+    },
   };
 
   const agent = createClaudeCodeAgent({
@@ -68,6 +79,10 @@ async function main(): Promise<void> {
     logger: quietLogger(),
     mcpProviders: [testProvider],
   });
+
+  // 验证 behaviorFlags 是否真的进了 agent deps
+  const depsProbe = (agent as unknown as { deps?: { runtimeConfig?: { behaviorFlags?: unknown } } }).deps;
+  log('behaviorFlags:', JSON.stringify(depsProbe?.runtimeConfig?.behaviorFlags));
 
   const maker = new Maker({ agents: { 'claude-code': agent } as never, storage, logger: quietLogger('maker') });
   const session = await maker.createSession({
@@ -82,7 +97,9 @@ async function main(): Promise<void> {
     if (e.type === 'error') log('错误事件', JSON.stringify(e.data).slice(0, 300));
   });
 
-  await session.send('一句话回答：你现在能调用哪些工具？只列名字，一行一个。');
+  await session.send(
+    '调用 echo_marker 工具，参数 text="hello"。把它的完整返回值原样告诉我。',
+  );
 
   // 等最终文本
   const done = new Promise<string>((resolve) => {

@@ -325,6 +325,28 @@ export function createClaudeCodeAgent(opts: ClaudeHostOptions): ClaudeCodeAgent 
     runtimeConfig: {
       endpoint: opts.endpoint,
       autoCompactThresholdPct: 85,
+      /*
+       * 让 Claude Code CLI 接受「非官方模型名」的三个 flag。
+       *
+       * 少了 XDT_MAKER_MODEL_CONTEXT_WINDOWS，CLI 会认为模型未知，
+       * **静默退出，一个请求都不发** —— 没有任何错误输出，极难查。
+       * 加上之后 CLI 仍会打印 unrecognized_model 警告，但请求照发。
+       *
+       * 这个变量名是 Cindy（上游）自己定的，格式 { "model-id": 窗口 }。
+       */
+      behaviorFlags: {
+        CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',
+        CLAUDE_CODE_ENTRYPOINT: 'claude-desktop',
+        XDT_MAKER_MODEL_CONTEXT_WINDOWS: JSON.stringify({
+          [opts.model]: opts.contextWindow ?? 200_000,
+          ...Object.fromEntries(
+            (opts.extraModels ?? []).map((m) => [
+              m.id,
+              m.contextWindow ?? opts.contextWindow ?? 200_000,
+            ]),
+          ),
+        }),
+      },
     },
     binaryPath: opts.binaryPath,
     logger,

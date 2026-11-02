@@ -443,3 +443,103 @@ CLI 发 `sonnet` → 宿主代理改写 body 里的 `model` → 转发到 tokenh
 
 - `createClaudeCodeAgent` 在 host-core 里（能起会话，能到模型这一层）
 - ORCA 改成 `McpProvider`（跨 harness 可复用，虽然目前只有 pi 在用）
+
+---
+
+## 十三、【重要修正】Cindy 的原生模型接法是可行的，我之前判断错了
+
+我去查了 Cindy 怎么处理「CLI 模型白名单」这个问题，答案是——
+**它根本不需要改写代理。我漏了一个环境变量。**
+
+### 真正需要的三个环境变量
+
+```bash
+CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1   # 锁定 provider 路由
+CLAUDE_CODE_ENTRYPOINT=claude-desktop    # 标明是宿主托管
+XDT_MAKER_MODEL_CONTEXT_WINDOWS='{"<model-id>":200000}'   # ← 关键这个
+```
+
+第三个来自 `env-builder.ts:556`：
+
+```ts
+const modelContextWindows = serializeModelContextWindows(options.modelContextWindows);
+if (modelContextWindows) env[MAKER_MODEL_CONTEXT_WINDOWS_ENV] = modelContextWindows;
+```
+
+序列化后是一个 `{ "model-id": window, "model-id[1m]": window }` 的 JSON。
+
+### 关键认识：`unrecognized_model` 只是警告
+
+加上这个变量后，CLI 仍然打印：
+
+```
+[claude-code:unrecognized_model] {"model":"deepseek-v4.1-flash-1017"}
+```
+
+**但请求照发、回答照回**。之前失败是因为**没设这个变量，CLI 直接静默退出**，
+而不是「模型名被拒绝」。
+
+### 实测结果
+
+```
+[REQ] deepseek-v4.1-flash-1017  tools=15
+模型回了完整中文回答
+```
+
+**`tools=15`** —— 这才是关键：15 个工具直接进了模型上下文，
+不需要 `cindy_mcp_list_tools` 二段发现。
+
+对照 pi 那边：模型看到的工具列表里**永远没有** `create_worker`。
+
+### 所以路线完全变了
+
+**不需要写改写代理**。只要：
+
+1. `createClaudeCodeAgent` 传 `XDT_MAKER_MODEL_CONTEXT_WINDOWS`
+2. 用 ORCA 的 `McpProvider.toClaudeSdkConfig` 挂 in-process server
+3. 把 lead 会话切到 claude-code
+
+**成本从 2 天降到约 1 天。**
+
+### 修正之前的三个风险判断
+
+| 之前担心的 | 实际 |
+|---|---|
+| 要写改写代理（hack） | ❌ 不需要，一个环境变量 |
+| CLI 升级会失效 | ⚠️ 仍存在，但靠的是 CLI 公开的 env（`XDT_` 前缀是宿主自定义的，风险低） |
+| 260MB 二进制 | ✅ 仍在 |
+
+### 唯一还没验证的
+
+**deepseek 在 Claude CLI 里会不会照样编造工具名？**
+
+这个必须验证。但现在工具是真·直接可见（`tools=15`），
+理论上模型没理由编名字。需要实测确认。
+
+### 补充：endpoint 不能带 `/v1`
+
+踩了一个坑：`ANTHROPIC_BASE_URL` 要传**不带 `/v1`** 的地址。
+
+```bash
+# ❌ 错：CLI 会拼成 /v1/v1/messages
+ANTHROPIC_BASE_URL=https://tokenhub.tencentmaas.com/v1
+
+# ✅ 对
+ANTHROPIC_BASE_URL=https://tokenhub.tencentmaas.com
+```
+
+因为 CLI 自己是 `BASE_URL + /v1/messages`。带 `/v1` 会 404，
+而 CLI 把这个 404 报成 `model_not_found`（误导性很强）。
+
+**当前可用的完整配置**：
+
+```bash
+CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1
+CLAUDE_CODE_ENTRYPOINT=claude-desktop
+XDT_MAKER_MODEL_CONTEXT_WINDOWS='{"deepseek-v4.1-flash-1017":200000}'
+ANTHROPIC_BASE_URL=https://tokenhub.tencentmaas.com
+ANTHROPIC_API_KEY=<tokenhub 的 key>
+--model deepseek-v4.1-flash-1017
+```
+
+实测返回：「你好！有什么可以帮你的吗？」
