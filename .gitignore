@@ -8,7 +8,8 @@
 .bench/
 .mcp-spike/
 release/
-apps/desktop/.appdata/
+apps/desktop/.appdata*/
+.appdata*/
 apps/desktop/.autotest/
 apps/desktop/.smoke-data/
 
