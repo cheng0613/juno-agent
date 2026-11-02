@@ -4391,7 +4391,7 @@ export async function runToolProbe(win: BrowserWindow, runtime: HostRuntime): Pr
     const leadId = await runtime.ensureSession();
     await runtime.send(
       leadId,
-      '用 create_worker 创建一个 worker，role 是 developer。创建完把 worker_id 告诉我。',
+      '只回答：你的工具列表里有没有包含 orca 的工具？有就列出，没有就说"没有"。不要解释。',
     );
     for (let i = 0; i < 30; i += 1) {
       await delay(2000);

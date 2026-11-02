@@ -43,6 +43,13 @@ export interface OrcaProviderHost {
   reportToLead: (workerId: string, message: string) => Promise<void>;
   /** worker 反查它属于哪个 lead；返回 null 表示这个 session 不是 worker */
   workerOf: (sessionId: string) => { workerId: string; leadSessionId: string } | null;
+  /**
+   * 这个会话当 lead 开过协同吗（有过 team）。
+   *
+   * 为什么要判：普通聊天不该挂 ORCA 工具。
+   * 不筛的话模型看到 create_worker 就会自己派活，用户还没说要协同。
+   */
+  hasTeamForLead: (sessionId: string) => boolean;
 }
 
 /** 工具注册器：宿主按 harness 提供具体实现 */
@@ -228,12 +235,25 @@ export function createOrcaProvider(host: OrcaProviderHost): McpProvider & {
       source: 'builtin',
     },
 
+    /*
+     * 挂不挂这个 server。
+     *
+     * 三种会话：
+     *   1. worker —— 需要 send_to_lead（回报给 lead）
+     *   2. lead（开过协同的）—— 需要 create_worker / send_to_worker / list_workers
+     *   3. 普通会话 —— **什么都不挂**
+     *
+     * 第 3 条很关键：不筛的话每个聊天都顶着一堆协同工具，
+     * 模型会误以为用户想派活，还没等用户开口就去建 worker。
+     */
     isEnabled: (ctx) => {
       const caller = callerOf(ctx);
       if (!caller?.sessionId) return false;
-      // worker 会话要回报工具；lead 会话要派活工具。
-      // 普通会话（既不是 worker 也没开过协同）不挂 —— 见上面注释。
-      return true;
+      // worker 认领身份：这个会话是不是某个 lead 的 worker
+      if (host.workerOf(caller.sessionId)) return true;
+      // lead 认领：这个会话有没有开过协同（有过 team）
+      // host 提供 hasTeam 而不是直接查库 —— provider 不该知道存储细节
+      return host.hasTeamForLead(caller.sessionId);
     },
 
     /*

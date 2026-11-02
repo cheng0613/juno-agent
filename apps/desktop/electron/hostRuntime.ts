@@ -413,6 +413,7 @@ export class HostRuntime {
             status: w.status,
           })),
         reportToLead: (workerId, message) => this.reportToLead(workerId, message),
+        hasTeamForLead: (sessionId) => this.orca.getActiveTeamByLead(sessionId) !== null,
         workerOf: (sessionId) => {
           const w = this.orca.getWorkerBySession(sessionId);
           if (!w) return null;
@@ -919,6 +920,33 @@ export class HostRuntime {
     const created = this.sessions.get(sessionId);
     if (!created) throw new Error(`会话创建失败: ${sessionId}`);
     return created;
+  }
+
+  /**
+   * 重建一个已 attach 的会话，让新的 MCP 工具生效。
+   *
+   * 只有「第一次开协同」时用：那时 lead 的 ORCA 工具还没挂上。
+   * 之后 team 一直存在，isEnabled 恒为 true，不用再重建。
+   */
+  private async rebuildLeadSession(sessionId: string): Promise<void> {
+    const running = this.activeTurns.has(sessionId);
+    if (running) {
+      // 正在跑就等它结束再说 —— 中途重建会打断用户正在做的事
+      logger.info('lead 正在跑，跳过工具重建；下一轮会自动带上', { sessionId });
+      return;
+    }
+    try {
+      this.sessions.delete(sessionId);
+      await this.resume(sessionId);
+      logger.info('lead 会话已重建，ORCA 工具生效', { sessionId });
+    } catch (error) {
+      // 重建失败不影响建 worker —— worker 已经存好了，
+      // 只是 lead 这轮看不到派活工具，用户可以重启应用
+      logger.warn('lead 会话重建失败', {
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async resume(sessionId: string): Promise<string> {
@@ -2124,7 +2152,23 @@ export class HostRuntime {
    * 超了直接报错而不是静默降级 —— 用户得知道为什么建不出来。
    */
   async createWorker(leadSessionId: string, config: OrcaWorkerConfig): Promise<OrcaWorkerRecord> {
+    const hadTeam = this.orca.getActiveTeamByLead(leadSessionId) !== null;
     const team = this.orca.createOrGetTeamForLead(leadSessionId);
+
+    /*
+     * 第一次开协同：lead 会话需要重新挂 MCP 工具。
+     *
+     * 为什么要重建：isEnabled 判的是「这个 lead 有没有 team」，
+     * 没有 team 时 ORCA 工具根本不挂 —— 否则普通聊天都会顶着一堆
+     * 协同工具，模型会自己派活。
+     * 但工具是在会话启动时注入的，建出 team 之后必须重建会话才看得到。
+     *
+     * 重建用 resume 那条路径：历史从 storage 重放，上下文不丢。
+     * 代价是若正有一轮在跑，那一轮会被打断 —— 所以只在第一次开协同时做。
+     */
+    if (!hadTeam && this.claudeAvailable) {
+      await this.rebuildLeadSession(leadSessionId);
+    }
 
     const total = this.orca.countWorkers(team.id);
     if (total >= ORCA_WORKER_HARD_LIMIT) {
