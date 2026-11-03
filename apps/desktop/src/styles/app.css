@@ -2693,3 +2693,16 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   max-height: 160px;
   overflow-y: auto;
 }
+
+/*
+ * 快捷键提示：Ctrl+K 时给搜索入口闪一下。
+ * 搜索面板还没做，先让按键有可见反馈 —— 按下去完全没动静比没这功能更困惑。
+ */
+@keyframes nav-pulse {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: var(--accent-soft, rgba(0, 0, 0, 0.06)); }
+}
+
+.nav-row-pulse {
+  animation: nav-pulse 600ms ease-out;
+}

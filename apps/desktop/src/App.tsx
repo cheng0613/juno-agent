@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Chat } from './Chat';
+import { clearDraft, readDraft, writeDraft } from './draftStore';
+import { useShortcuts } from './useShortcuts';
 import { DiffPanel } from './DiffPanel';
 import { ExtraDirsPanel } from './ExtraDirsPanel';
 import { ModeControls } from './ModeControls';
@@ -174,6 +176,13 @@ export function App() {
   const [currentAgentKind, setCurrentAgentKind] = useState<'pi' | 'claude-code' | null>(null);
   const [dark, setDark] = useState(false);
   const [input, setInput] = useState('');
+  /*
+   * 草稿要按会话存。
+   *
+   * 用 ref 记「当前输入属于哪个会话」：切会话时 input 会被改写成
+   * 新会话的草稿，如果直接用 activeId 去存，会存错位置。
+   */
+  const draftOwnerRef = useRef<string | null>(null);
   // 正在跑的时候用户又输入的句子，排在这里，等本轮结束自动发出
   const [queued, setQueued] = useState<string[]>([]);
   const [compacting, setCompacting] = useState(false);
@@ -272,6 +281,43 @@ export function App() {
   };
 
   // 把崩溃开关挂到 window 上（仅验收环境有 __autotestInject）
+  /*
+   * 草稿存取。
+   *
+   * 两件事：
+   *   1. 会话切走前，把旧会话的输入存起来
+   *   2. 会话切过来后，把新会话的草稿读出来
+   *
+   * 用 activeId 变化做驱动，比在每个入口（点侧栏、新建、归档、
+   * 删会话……）都手写一遍可靠。
+   */
+  useEffect(() => {
+    const previous = draftOwnerRef.current;
+    if (previous !== activeId) {
+      // 把上一条正在打的字存回它自己的会话
+      if (previous) writeDraft(previous, input);
+      // 再把新会话的草稿读出来
+      /*
+       * **即使为空也要写回去**。
+       *
+       * 之前写的是 if (restored) setInput(restored) ——
+       * 新会话没草稿时就不动 input，结果上一个会话的字留在框里，
+       * 看上去像「草稿跟着人走」。实测踩到。
+       */
+      setInput(readDraft(activeId));
+      draftOwnerRef.current = activeId;
+    }
+    // input 不进依赖：它每敲一个字都变，进去会变成每秒写几十次 storage
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
+  /* 输入变化时实时写盘（防抖 400ms）—— 防的是「打了半天，直接关窗口」 */
+  useEffect(() => {
+    if (!activeId || draftOwnerRef.current !== activeId) return;
+    const timer = setTimeout(() => writeDraft(activeId, input), 400);
+    return () => clearTimeout(timer);
+  }, [input, activeId]);
+
   useEffect(() => {
     if (typeof window.__autotestInject === 'undefined') return;
     (window as unknown as { __crashForTest?: () => void }).__crashForTest = () =>
@@ -610,6 +656,8 @@ export function App() {
     if ((!text && pendingImages.length === 0) || !activeId) return;
 
     setInput('');
+    // 发出去了，草稿就不再需要 —— 不清的话下次回来又把刚发的话填回输入框
+    clearDraft(activeId);
     const images = pendingImages;
     setPendingImages([]);
 
@@ -645,8 +693,9 @@ export function App() {
     const text = input.trim();
     if (!text) return;
     setInput('');
+    clearDraft(activeId);
     setQueued((prev) => [...prev, text]);
-  }, [input]);
+  }, [input, activeId]);
 
   /* 切档位 / 开关计划模式 */
   const changeMode = useCallback(
@@ -1181,6 +1230,52 @@ export function App() {
     setTreeOpen(false);
   };
 
+  /*
+   * 全局快捷键。
+   *
+   * 用法：
+   *   Ctrl+N       新建会话（输入框里也能用）
+   *   Ctrl+,       设置
+   *   Ctrl+K       搜索
+   *   Ctrl+Shift+L 切主题
+   *   Esc          关掉最上层浮层
+   */
+  useShortcuts({
+    newSession: () => void newSession(),
+    openSettings: () => setSettingsMode('drawer'),
+    toggleTheme,
+    focusSearch: () => {
+      // 搜索面板还没做，先把侧栏里的入口高亮一下
+      document.querySelector('[data-testid="nav-search"]')?.classList.add('nav-row-pulse');
+      setTimeout(
+        () => document.querySelector('[data-testid="nav-search"]')?.classList.remove('nav-row-pulse'),
+        600,
+      );
+    },
+    /* Esc 一层一层关：浮层 → 面板 */
+    hasOverlay: () =>
+      Boolean(
+        approval ||
+          settingsMode ||
+          dirsOpen ||
+          treeOpen ||
+          diffOpen ||
+          workerDialogOpen,
+      ),
+    escape: () => {
+      // 审批弹窗优先级最高 —— 不先答掉它，后面的操作都不生效
+      if (approval) {
+        void answer('deny');
+        return;
+      }
+      if (settingsMode) return setSettingsMode(null);
+      if (workerDialogOpen) return setWorkerDialogOpen(false);
+      if (dirsOpen) return setDirsOpen(false);
+      if (treeOpen) return setTreeOpen(false);
+      if (diffOpen) return setDiffOpen(false);
+    },
+  });
+
   const answer = async (behavior: 'allow' | 'deny') => {
     if (!approval) return;
     const requestId = approval.requestId;
@@ -1375,6 +1470,7 @@ export function App() {
           <div className="composer">
             <textarea
               rows={1}
+              data-testid="composer-input"
               value={input}
               placeholder={
                 running

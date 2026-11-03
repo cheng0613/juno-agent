@@ -4854,3 +4854,192 @@ export async function runStatusLeakTest(win: BrowserWindow, runtime: HostRuntime
     app.quit();
   }
 }
+
+
+/**
+ * 验收：草稿。
+ *
+ * 三条：切会话不能丢、切回来要还在、发出去要清掉。
+ * 走真实 UI 路径（点侧栏 / 点新建 / 敲字），不直接调 runtime。
+ */
+export async function runDraftTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (m: string) => console.log('[draft] ' + m);
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+  try {
+    await delay(2500);
+
+    // 建两个会话（走 UI：点两次新建）
+    await js(`document.querySelector('[data-testid="nav-new"]')?.click()`);
+    await delay(1200);
+    const a = await js(`document.querySelector('[data-session-id] .session-card.is-active')?.closest('[data-session-id]')?.dataset.sessionId ?? ''`);
+    note('会话 A: ' + String(a).slice(0, 8));
+
+    /*
+     * 先给 A 发一条废话，让它不再是空会话。
+     * 否则点「新建」会被空会话去重拦下（只刷列表不建新的）——
+     * 这是有意为之的行为，测试必须绕过它而不是改它。
+     */
+    await js(`
+      (() => {
+        const ta = document.querySelector('[data-testid="composer-input"]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '你好');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      })()
+    `);
+    await delay(3000);
+    note('A 已发出一条消息（不再是空会话）');
+
+    // 在 A 里敲一段字（不发送）
+    const typed = '这是一段还没发出去的草稿';
+    await js(`
+      (() => {
+        const ta = document.querySelector('[data-testid="composer-input"]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, ${JSON.stringify(typed)});
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      })()
+    `);
+    await delay(700); // 等防抖写盘
+    const aValue = await js(`document.querySelector('[data-testid="composer-input"]').value`);
+    note('A 输入框内容: ' + JSON.stringify(aValue));
+    if (aValue !== typed) throw new Error('敲字没进输入框');
+
+    // 点新建切到 B
+    await js(`document.querySelector('[data-testid="nav-new"]')?.click()`);
+    await delay(1500);
+    const b = await js(`document.querySelector('[data-session-id] .session-card.is-active')?.closest('[data-session-id]')?.dataset.sessionId ?? ''`);
+    note('会话 B: ' + String(b).slice(0, 8));
+    if (b === a) throw new Error('没切到新会话');
+
+    const bValue = await js(`document.querySelector('[data-testid="composer-input"]').value`);
+    note('B 输入框内容: ' + JSON.stringify(bValue));
+    if (bValue !== '') throw new Error('草稿串到新会话了');
+
+    // 点回 A，草稿应该还在
+    await js(`document.querySelector('[data-session-id="${a}"] button')?.click()`);
+    await delay(1500);
+    const backValue = await js(`document.querySelector('[data-testid="composer-input"]').value`);
+    note('切回 A 输入框: ' + JSON.stringify(backValue));
+    if (backValue !== typed) throw new Error('切回来草稿丢了');
+
+    // 发出去，草稿要清掉
+    await js(`
+      (() => {
+        const ta = document.querySelector('[data-testid="composer-input"]');
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      })()
+    `);
+    await delay(1200);
+    const afterSend = await js(`document.querySelector('[data-testid="composer-input"]').value`);
+    note('发送后输入框: ' + JSON.stringify(afterSend));
+    if (afterSend !== '') throw new Error('发送后输入框没清空');
+
+    const stored = await js(`localStorage.getItem('juno.draft.' + ${JSON.stringify(a)})`);
+    note('localStorage 里的草稿: ' + JSON.stringify(stored));
+    if (stored) throw new Error('发送后草稿没从 localStorage 删掉');
+
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-draft-failed').catch(() => undefined);
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}
+
+
+/**
+ * 验收：快捷键。
+ *
+ * 重点验两件事：
+ *   1. Ctrl+Shift+L 切主题生效
+ *   2. **输入框里打字时 Ctrl+K 不能被抢** —— 否则用户想删半行字
+ *      结果弹出个面板，很莫名
+ */
+export async function runShortcutTest(win: BrowserWindow, runtime: HostRuntime): Promise<void> {
+  const note = (m: string) => console.log('[sc] ' + m);
+  const js = (code: string) => win.webContents.executeJavaScript(code, true);
+  const fire = (opts: object) =>
+    js(
+      `document.body.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ bubbles: true, cancelable: true }, ${JSON.stringify(opts)})))`,
+    );
+  try {
+    await delay(2500);
+
+    // 1. Ctrl+Shift+L 切主题
+    const before = await js(`document.documentElement.classList.contains('dark')`);
+    await fire({ key: 'L', ctrlKey: true, shiftKey: true });
+    await delay(600);
+    const after = await js(`document.documentElement.classList.contains('dark')`);
+    note('主题: ' + before + ' → ' + after);
+    if (before === after) throw new Error('Ctrl+Shift+L 没切主题');
+    // 切回去，别影响后续
+    await fire({ key: 'L', ctrlKey: true, shiftKey: true });
+    await delay(400);
+
+    // 2. Ctrl+, 打开设置
+    await fire({ key: ',', ctrlKey: true });
+    await delay(900);
+    const settingsOpen = await js(
+      `!!document.querySelector('[data-testid="settings-drawer"], .settings-drawer')`,
+    );
+    note('Ctrl+, 打开设置: ' + settingsOpen);
+
+    // 3. Esc 关掉它
+    if (settingsOpen) {
+      await fire({ key: 'Escape' });
+      await delay(700);
+      const stillOpen = await js(
+        `!!document.querySelector('[data-testid="settings-drawer"], .settings-drawer')`,
+      );
+      note('Esc 关闭后还在: ' + stillOpen);
+      if (stillOpen) throw new Error('Esc 没关掉设置面板');
+    }
+
+    // 4. 输入框里按 Ctrl+K 不能被抢走
+    await js(`
+      (() => {
+        const ta = document.querySelector('[data-testid="composer-input"]');
+        if (ta) ta.focus();
+      })()
+    `);
+    await delay(300);
+    const focused = await js(`document.activeElement?.dataset?.testid ?? '(无)'`);
+    note('焦点: ' + focused);
+
+    const prevented = await js(`
+      (() => {
+        const ta = document.querySelector('[data-testid="composer-input"]');
+        const ev = new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true });
+        const ok = ta.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      })()
+    `);
+    note('输入框里 Ctrl+K 被拦截: ' + prevented + '（应为 false）');
+    if (prevented) throw new Error('输入框里的 Ctrl+K 被快捷键抢走了');
+
+    // 5. Ctrl+N 在输入框里也要能用（新建是全局的）
+    const newPrevented = await js(`
+      (() => {
+        const ta = document.querySelector('[data-testid="composer-input"]');
+        const ev = new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true, cancelable: true });
+        ta.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      })()
+    `);
+    note('输入框里 Ctrl+N 被拦截: ' + newPrevented + '（应为 true）');
+    if (!newPrevented) throw new Error('输入框里的 Ctrl+N 没触发新建');
+
+    await shootTo(win, '75-shortcuts');
+    note('完成');
+  } catch (e) {
+    note('失败: ' + String(e));
+    await shootTo(win, '99-shortcut-failed').catch(() => undefined);
+  } finally {
+    await delay(300);
+    app.quit();
+  }
+}
