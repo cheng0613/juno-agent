@@ -81,6 +81,8 @@ export const IPC = {
   /** 渲染 → 主：只列会话（排序 / 置顶变化后重拉） */
   listSessions: 'host:list-sessions',
   searchSessions: 'host:search-sessions',
+  /** 主题变了 —— 主进程要跟着调窗口背板染色，否则深色模式下侧栏会泛白 */
+  setThemeDark: 'host:set-theme-dark',
   /** 渲染 → 主：上报当前正在看的会话（决定要不要发通知） */
   setCurrentSession: 'host:set-current-session',
   /** 主 → 渲染：点通知后要求切到某个会话 */
@@ -627,6 +629,8 @@ export interface HostBridge {
   listSessions(): Promise<SessionSummary[]>;
   /** 搜索会话（标题 + 消息内容） */
   searchSessions(query: string): Promise<SearchHit[]>;
+  /** 通知主进程当前是深色还是浅色（影响窗口背板着色） */
+  setThemeDark(dark: boolean): Promise<void>;
 
   /* ---- ORCA 协作 ---- */
   listWorkers(leadSessionId: string): Promise<UiWorker[]>;

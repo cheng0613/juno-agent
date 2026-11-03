@@ -22,7 +22,12 @@
     font-size: var(--text-14);
     line-height: var(--text-14-lh);
     color: var(--text-primary);
-    background: var(--surface);
+    /*
+     * body **不能有底色**，否则窗口的 Acrylic 材质被它盖住，壁纸透不出来。
+     * 背景由主区（.main 白底）和窗口背板共同构成。
+     * 无材质的平台靠窗口自己的 backgroundColor（不透明）兜底。
+     */
+    background: transparent;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -70,7 +75,14 @@
   display: flex;
   flex-direction: column;
   padding: 0 var(--space-2) var(--space-2);
-  background: var(--surface);
+  /*
+   * 侧栏**不自己上色**，让窗口背板（Acrylic 染色）透出来。
+   *
+   * 上游说得明白：Acrylic 的原生 backing 已经带一层侧栏染色，
+   * CSS 再叠一遍会变成两层叠加，颜色明显变重。
+   * 没有材质的平台（Win10/其他）由 body 的不透明底兜住，视觉仍是对的。
+   */
+  background: transparent;
   min-height: 0;
   min-width: 0;
 }

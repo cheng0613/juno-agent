@@ -59,6 +59,7 @@ const bridge: HostBridge = {
   orcaRoleOf: (sessionId) => ipcRenderer.invoke(IPC.orcaRoleOf, sessionId),
   listSessions: () => ipcRenderer.invoke(IPC.listSessions),
   searchSessions: (query) => ipcRenderer.invoke(IPC.searchSessions, query),
+  setThemeDark: (dark) => ipcRenderer.invoke(IPC.setThemeDark, dark),
   setCurrentSession: (sessionId) => ipcRenderer.invoke(IPC.setCurrentSession, sessionId),
   onFocusSession: (listener) => {
     const handler = (_e: unknown, sessionId: string) => listener(sessionId);

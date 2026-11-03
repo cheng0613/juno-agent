@@ -2,6 +2,14 @@
 /* ===== cindy-light ===== */
 :root {
   --surface: rgb(242 242 237);
+  /*
+   * 侧栏半透明底。
+   *
+   * 上游 CINDY_ACRYLIC_WINDOW_BACKING.light = rgba(238, 238, 233, 0.85)。
+   * 注意它跟 --surface (#F2F2ED) **不是同一个色**：更灰一点、且 85% 透明，
+   * 透出底下的窗口背板。Windows 常规展开态就是这个值直接当背景。
+   */
+  --surface-translucent-sidebar: rgb(238 238 233 / 0.85);
   --surface-hsl: hsl(60 16.1% 93.9%);
   --surface-elevated: rgb(253 253 248);
   --surface-elevated-soft: rgb(250 250 245);
@@ -184,6 +192,8 @@
 /* ===== cindy-dark ===== */
 .dark {
   --surface: rgb(24 24 24);
+  /* 上游 CINDY_ACRYLIC_WINDOW_BACKING.dark = rgba(5, 5, 5, 0.85) */
+  --surface-translucent-sidebar: rgb(5 5 5 / 0.85);
   --surface-hsl: hsl(0 0% 9.4%);
   --surface-elevated: rgb(31 31 31);
   --surface-elevated-soft: rgb(29 29 29);

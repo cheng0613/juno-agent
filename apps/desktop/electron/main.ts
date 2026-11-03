@@ -9,12 +9,14 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 
 import { HostRuntime, configFromEnv } from './hostRuntime.js';
 import { readSettings, writeSettings, hasStoredKey, encryptionAvailable, settingsFilePath } from './settingsStore.js';
 import { loadWindowState, saveWindowState } from './windowState.js';
 import { migrateLegacyUserData } from './migrateUserData.js';
+import { resolveBackdropConfig } from './windowBackdrop.js';
+import { loadThemeSnapshot, resolveIsDark, saveThemeSnapshot } from './themeStore.js';
 import { notifyTurnFinished } from './notifications.js';
 import {
   IPC,
@@ -391,6 +393,34 @@ function registerIpc(): void {
     runtime!.searchSessions(typeof query === 'string' ? query : ''),
   );
 
+  /*
+   * 主题变了：更新窗口背板 + 写盘。
+   *
+   * 两件事缺一不可：
+   *   不更新背板 → 切到深色后侧栏还衬着浅色，很突兀；
+   *   不写盘 → 下次启动建窗时读不到，第一次渲染又错。
+   *
+   * Acrylic 的染色是窗口级的（backgroundMaterial + backgroundColor），
+   * 所以必须在运行时重新设一次。
+   */
+  ipcMain.handle(IPC.setThemeDark, async (_e, dark: unknown) => {
+    const isDark = Boolean(dark);
+
+    // 先落盘 —— 即使窗口已销毁，主题选择也该记住
+    await saveThemeSnapshot({
+      mode: isDark ? 'dark' : 'light',
+      resolvedIsDark: isDark,
+      systemIsDark: nativeTheme.shouldUseDarkColors,
+    });
+
+    if (!win || win.isDestroyed()) return;
+    const cfg = resolveBackdropConfig(isDark);
+    win.setBackgroundColor(cfg.backgroundColor);
+    if (process.platform === 'win32' && cfg.backgroundMaterial !== 'none') {
+      win.setBackgroundMaterial(cfg.backgroundMaterial);
+    }
+  });
+
   /* ---- ORCA ---- */
   ipcMain.handle(IPC.listWorkers, async (_e, leadSessionId: string) =>
     runtime!.listWorkers(leadSessionId),
@@ -446,15 +476,39 @@ async function createWindow(): Promise<void> {
 
   // 恢复上次的尺寸与位置（已校验过是否还在屏幕上）
   const saved = await loadWindowState();
+
+  /*
+   * 主题在建窗前就要知道。
+   *
+   * Acrylic 的染色是窗口级的，建窗时定好就不好改（渐变会很祭）。
+   * 之前的做法是看 nativeTheme —— 用户在应用里选的深色它不知道，
+   * 开机第一次就衬错了色。现在先读主进程里的主题快照。
+   */
+  const themeSnapshot = await loadThemeSnapshot();
+  const initialIsDark = resolveIsDark(themeSnapshot);
+  const backdrop = resolveBackdropConfig(initialIsDark);
+
   win = new BrowserWindow({
     width: saved.width,
     height: saved.height,
     ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
     minWidth: 720,
     minHeight: 520,
-    // 与 tokens.css 的 --surface 一致：#f2f2ed。
-    // 写死的理由：这个值在页面加载前就要用，读不到 CSS 变量。
-    backgroundColor: '#f2f2ed',
+    /*
+     * 背板材质：让侧栏真的透出桌面壁纸（对齐 Cindy 的玻璃效果）。
+     *
+     * Windows 11 用 Acrylic，背景色是 85% 的侧栏染色；
+     * Win10 / 其他平台回退不透明底。
+     * 注意两件事（都是上游实测结论）：
+     *   1. **不加 CSS backdrop-filter** —— 它会把背衬渲成黑色，
+     *      模糊由系统材质负责；
+     *   2. **不加 transparent: true** —— 靠 backgroundMaterial 即可，
+     *      透明窗会带来拖拽区域和阴影的副作用。
+     */
+    backgroundColor: backdrop.backgroundColor,
+    ...(backdrop.backgroundMaterial !== 'none'
+      ? { backgroundMaterial: backdrop.backgroundMaterial }
+      : {}),
     /*
      * 窗口图标（任务栏 / Alt+Tab）。
      * 打包后 exe 自己有图标，但开发时和某些场景下要从文件读，
@@ -586,6 +640,28 @@ app.whenReady().then(async () => {
 
   registerIpc();
   await createWindow();
+
+  /*
+   * 系统主题变化 → 跟随。
+   *
+   * 只在用户没显式选过主题（mode === 'system'）时才跟着变；
+   * 显式选过就不动，否则用户选了深色、系统白天切浅色时应用会自己跳走。
+   *
+   * 注意：这里只调窗口背板，**不改渲染进程的 class** ——
+   * 那由渲染进程自己的 matchMedia 监听负责，两边各管各的。
+   */
+  nativeTheme.on('updated', () => {
+    void (async () => {
+      const snap = await loadThemeSnapshot();
+      if (snap.mode !== 'system') return;
+      if (!win || win.isDestroyed()) return;
+      const cfg = resolveBackdropConfig(nativeTheme.shouldUseDarkColors);
+      win.setBackgroundColor(cfg.backgroundColor);
+      if (process.platform === 'win32' && cfg.backgroundMaterial !== 'none') {
+        win.setBackgroundMaterial(cfg.backgroundMaterial);
+      }
+    })();
+  });
 
   // 自动化验收：只在显式开启时挂上，不影响正常启动
   //   APP_AUTOTEST=1          → 开一轮真实对话并截图

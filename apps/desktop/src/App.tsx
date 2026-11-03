@@ -277,12 +277,39 @@ export function App() {
   const [unseenCount, setUnseenCount] = useState(0);
 
   /* ---------------- 主题 ---------------- */
+  /*
+   * 初始主题。
+   *
+   * 三层回退：用户显式选过就听用户的，否则跟随系统。
+   * 「显式选过」= localStorage 里有 app-theme 这个键；
+   * 它不存在时**不要**往主进程写信 —— 那会把 mode 从 system 改成 light，
+   * 从此不再跟随系统切换。
+   */
   useEffect(() => {
     const saved = localStorage.getItem(THEME_KEY);
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const initial = saved ? saved === 'dark' : prefersDark;
     setDark(initial);
     document.documentElement.classList.toggle('dark', initial);
+    // 只在用户真的选过时才回写主进程，避免把 system 模式钉死
+    if (saved) void host.setThemeDark(initial);
+  }, []);
+
+  /*
+   * 跟随系统主题。
+   *
+   * 用户没显式选过（localStorage 没值）时，系统切深浅色界面跟着变。
+   * 只调样式，**不回写主进程** —— 主进程的 nativeTheme 监听会自己处理背板。
+   */
+  useEffect(() => {
+    if (localStorage.getItem(THEME_KEY)) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => {
+      setDark(e.matches);
+      document.documentElement.classList.toggle('dark', e.matches);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
   }, []);
 
   const toggleTheme = () => {
@@ -290,6 +317,8 @@ export function App() {
     setDark(next);
     document.documentElement.classList.toggle('dark', next);
     localStorage.setItem(THEME_KEY, next ? 'dark' : 'light');
+    // 用户显式选择 → 写盘并切换背板染色
+    void host.setThemeDark(next);
   };
 
   // 把崩溃开关挂到 window 上（仅验收环境有 __autotestInject）

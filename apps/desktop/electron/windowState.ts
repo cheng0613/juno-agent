@@ -100,6 +100,25 @@ export function ensureOnScreen(state: WindowState): WindowState {
 export async function saveWindowState(win: BrowserWindow): Promise<void> {
   if (win.isDestroyed()) return;
   const normal = win.getNormalBounds();
+
+  /*
+   * 尺寸合理性检查。
+   *
+   * 实测踩到过：某些时序下 getNormalBounds() 会返回一个接近窗口最小值的
+   * 尺寸（且每次启动 +4px），而 isMaximized() 一直是 true。
+   * 那个值一旦写盘，下次启动就变成「还原后也只有这么小」，
+   * 而且因为最大化状态还是 true，用户点「还原」也看不出变化 ——
+   * 只能删配置文件才能救回来。
+   *
+   * 所以：小于最小尺寸的读数直接不写盘，保留上一次的记录。
+   */
+  const MIN_W = 720;
+  const MIN_H = 520;
+  if (normal.width < MIN_W || normal.height < MIN_H) {
+    console.warn('[window-state] 读数异常，跳过保存:', normal.width, 'x', normal.height);
+    return;
+  }
+
   const state: WindowState = {
     width: normal.width,
     height: normal.height,
