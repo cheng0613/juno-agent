@@ -42,6 +42,8 @@ fs.mkdirSync(stage, { recursive: true });
 console.log('→ 拷贝渲染层与主进程');
 copyDir(path.join(root, 'dist'), path.join(stage, 'dist'));
 copyDir(path.join(root, 'dist-electron'), path.join(stage, 'dist-electron'));
+// 图标：electron-builder 从 stage 目录读，不拷过去就找不到
+copyDir(path.join(root, 'build'), path.join(stage, 'build'));
 // 源码映射对使用者没用，只会让包变大
 for (const dir of ['dist-electron']) {
   for (const f of fs.readdirSync(path.join(stage, dir))) {
@@ -114,8 +116,10 @@ await build({
   config: {
     electronVersion: ELECTRON_VERSION,
     electronDist: fs.existsSync(LOCAL_ELECTRON_DIST) ? LOCAL_ELECTRON_DIST : undefined,
-    appId: 'app.spike.agent',
+    appId: 'app.juno.desktop',
     productName: 'Juno',
+    // 图标：由 scripts/gen-icon.mjs 生成（纯 Node 逐像素画，不依赖 sharp）
+    icon: path.join(stage, 'build', 'icon.ico'),
     directories: { output: outDir },
     // pi-bin 已由 extraResources 单独投放，必须从 asar 里排除，
     // 否则 pi.exe（106MB）会被打进去两次，包体积直接翻倍
@@ -127,8 +131,14 @@ await build({
     npmRebuild: false,
     win: {
       target: targets,
-      // 不签名：本地验证用
-      signAndEditExecutable: false,
+      icon: path.join(stage, 'build', 'icon.ico'),
+      /*
+       * 只跳签名，**不跳资源写入**。
+       *
+       * 原先写的 signAndEditExecutable: false 会把图标和元数据一起跳过 ——
+       * 产物 exe 顶着 Electron 默认图标。signExecutable 才是只关签名。
+       */
+      signExecutable: false,
     },
     nsis: {
       oneClick: false,

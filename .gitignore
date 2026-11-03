@@ -31,3 +31,7 @@ node_modules/
 
 # ORCA worker 的 git worktree（测试/运行时产物）
 .juno/
+
+# 图标中间尺寸（由 scripts/gen-icon.mjs 生成，只保留 ico 和 icon.png）
+apps/desktop/build/icon-[0-9]*.png
+apps/desktop/build/icon.svg

@@ -7,6 +7,7 @@
  *   3. 事件用单向推送（webContents.send），请求用 invoke —— 不混用
  */
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
@@ -429,6 +430,15 @@ function registerIpc(): void {
 }
 
 async function createWindow(): Promise<void> {
+  /*
+   * 图标位置：开发时在仓库 build/ 下，打包后在 resources/build/ 下。
+   * 找不到就不传 icon 参数，用 Electron 默认图标 —— 不报错。
+   */
+  const iconCandidate = app.isPackaged
+    ? path.join(process.resourcesPath, 'build', 'icon.png')
+    : path.join(import.meta.dirname, '..', 'build', 'icon.png');
+  const appIconPath = existsSync(iconCandidate) ? iconCandidate : undefined;
+
   // 恢复上次的尺寸与位置（已校验过是否还在屏幕上）
   const saved = await loadWindowState();
   win = new BrowserWindow({
@@ -440,6 +450,12 @@ async function createWindow(): Promise<void> {
     // 与 tokens.css 的 --surface 一致：#f2f2ed。
     // 写死的理由：这个值在页面加载前就要用，读不到 CSS 变量。
     backgroundColor: '#f2f2ed',
+    /*
+     * 窗口图标（任务栏 / Alt+Tab）。
+     * 打包后 exe 自己有图标，但开发时和某些场景下要从文件读，
+     * 路径可能不存在（未跑 gen-icon），所以静默降级。
+     */
+    ...(appIconPath ? { icon: appIconPath } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(import.meta.dirname, 'preload.cjs'),
