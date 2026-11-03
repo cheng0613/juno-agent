@@ -80,6 +80,7 @@ export const IPC = {
   deleteSession: 'host:delete-session',
   /** 渲染 → 主：只列会话（排序 / 置顶变化后重拉） */
   listSessions: 'host:list-sessions',
+  searchSessions: 'host:search-sessions',
   /** 渲染 → 主：上报当前正在看的会话（决定要不要发通知） */
   setCurrentSession: 'host:set-current-session',
   /** 主 → 渲染：点通知后要求切到某个会话 */
@@ -223,6 +224,18 @@ export interface SessionSummary {
   orcaRole?: 'lead' | 'worker';
   /** 最后一条模型回复的摘要（单行，已截断）。给侧栏卡片用 */
   preview?: string;
+}
+
+/** 搜索命中的一条 */
+export interface SearchHit {
+  id: string;
+  title: string;
+  model: string;
+  updatedAt: number;
+  pinned: boolean;
+  /** 命中在标题还是正文 —— 正文命中要展示那段原文，否则用户不知为何被搜到 */
+  hit: 'title' | 'content';
+  snippet?: string;
 }
 
 /** 已归档的会话 */
@@ -610,6 +623,8 @@ export interface HostBridge {
   listArchived(): Promise<ArchivedSession[]>;
   deleteSession(sessionId: string): Promise<void>;
   listSessions(): Promise<SessionSummary[]>;
+  /** 搜索会话（标题 + 消息内容） */
+  searchSessions(query: string): Promise<SearchHit[]>;
 
   /* ---- ORCA 协作 ---- */
   listWorkers(leadSessionId: string): Promise<UiWorker[]>;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Chat } from './Chat';
+import { SearchPanel } from './SearchPanel';
 import { clearDraft, readDraft, writeDraft } from './draftStore';
 import { useShortcuts } from './useShortcuts';
 import { DiffPanel } from './DiffPanel';
@@ -150,6 +151,7 @@ export function App() {
   const [creatingWorker, setCreatingWorker] = useState(false);
   /** 「开启协同」弹窗是否打开 */
   const [workerDialogOpen, setWorkerDialogOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [workerError, setWorkerError] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   // 审批时是否记住这次选择；每次新审批重新开始
@@ -1244,18 +1246,12 @@ export function App() {
     newSession: () => void newSession(),
     openSettings: () => setSettingsMode('drawer'),
     toggleTheme,
-    focusSearch: () => {
-      // 搜索面板还没做，先把侧栏里的入口高亮一下
-      document.querySelector('[data-testid="nav-search"]')?.classList.add('nav-row-pulse');
-      setTimeout(
-        () => document.querySelector('[data-testid="nav-search"]')?.classList.remove('nav-row-pulse'),
-        600,
-      );
-    },
+    focusSearch: () => setSearchOpen(true),
     /* Esc 一层一层关：浮层 → 面板 */
     hasOverlay: () =>
       Boolean(
-        approval ||
+        searchOpen ||
+          approval ||
           settingsMode ||
           dirsOpen ||
           treeOpen ||
@@ -1263,7 +1259,9 @@ export function App() {
           workerDialogOpen,
       ),
     escape: () => {
-      // 审批弹窗优先级最高 —— 不先答掉它，后面的操作都不生效
+      // 搜索在最上层（用户刚按 Ctrl+K 打开的），先关它
+      if (searchOpen) return setSearchOpen(false);
+      // 审批弹窗优先级次高 —— 不先答掉它，后面的操作都不生效
       if (approval) {
         void answer('deny');
         return;
@@ -1337,6 +1335,7 @@ export function App() {
         onDelete={(id) => void deleteSession(id)}
         onOpenArchived={() => setArchivedOpen(true)}
         onOpenSettings={() => setSettingsMode('drawer')}
+        onOpenSearch={() => setSearchOpen(true)}
         onToggleTheme={toggleTheme}
         onToggleOrca={() => void (orcaOpen ? setOrcaOpen(false) : openOrca())}
         orcaOpen={orcaOpen}
@@ -1725,6 +1724,14 @@ export function App() {
           />
         )}
       </main>
+
+      {searchOpen && (
+        <SearchPanel
+          host={host}
+          onOpen={(id) => void switchSession(id)}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
 
       {workerDialogOpen && (
         <WorkerDialog

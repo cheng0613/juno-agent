@@ -58,6 +58,7 @@ const bridge: HostBridge = {
     ipcRenderer.invoke(IPC.setWorkerIsolation, workerId, isolated),
   orcaRoleOf: (sessionId) => ipcRenderer.invoke(IPC.orcaRoleOf, sessionId),
   listSessions: () => ipcRenderer.invoke(IPC.listSessions),
+  searchSessions: (query) => ipcRenderer.invoke(IPC.searchSessions, query),
   setCurrentSession: (sessionId) => ipcRenderer.invoke(IPC.setCurrentSession, sessionId),
   onFocusSession: (listener) => {
     const handler = (_e: unknown, sessionId: string) => listener(sessionId);

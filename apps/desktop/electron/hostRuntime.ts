@@ -2685,6 +2685,74 @@ export class HostRuntime {
     });
   }
 
+  /**
+   * 搜索会话。
+   *
+   * 同时搜**标题**和**消息内容** —— 只搜标题的话，「我记得聊过 SQLite 迁移」
+   * 这种就找不到，而会话标题常常是模型自动生成的，跟用户原话对不上。
+   *
+   * 排序：标题命中排前面（更精准），然后按时间。
+   */
+  searchSessions(query: string, limit = 30): Array<{
+    id: string;
+    title: string;
+    model: string;
+    updatedAt: number;
+    pinned: boolean;
+    /** 标题命中还是内容命中 */
+    hit: 'title' | 'content';
+    /** 内容命中时的那段原文（带上下文） */
+    snippet?: string;
+  }> {
+    const q = query.trim();
+    if (!q) return [];
+    // LIKE 的通配符要转义，否则用户搜 % 会把全表拉出来
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+    const rows = this.db
+      .prepare(
+        `SELECT s.id, s.title, s.model, s.updated_at, s.pinned_at,
+                (s.title LIKE ? ESCAPE '\\') AS in_title,
+                (SELECT m.content FROM messages m
+                  WHERE m.session_id = s.id
+                    AND m.role IN ('user','user_steer','assistant')
+                    AND m.content LIKE ? ESCAPE '\\'
+                  ORDER BY m.rowid DESC LIMIT 1) AS hit_content
+           FROM sessions s
+          WHERE s.archived_at IS NULL
+            AND (s.title LIKE ? ESCAPE '\\'
+                 OR EXISTS (SELECT 1 FROM messages m
+                             WHERE m.session_id = s.id
+                               AND m.role IN ('user','user_steer','assistant')
+                               AND m.content LIKE ? ESCAPE '\\'))
+          ORDER BY in_title DESC, s.updated_at DESC
+          LIMIT ?`
+      )
+      .all(like, like, like, like, limit) as Array<{
+      id: string;
+      title: string;
+      model: string;
+      updated_at: number;
+      pinned_at: number | null;
+      in_title: number;
+      hit_content: string | null;
+    }>;
+
+    return rows.map((r) => {
+      const inTitle = Boolean(r.in_title);
+      const snippet = inTitle ? undefined : (previewOf(r.hit_content) ?? undefined);
+      return {
+        id: r.id,
+        title: r.title || '未命名',
+        model: r.model,
+        updatedAt: r.updated_at,
+        pinned: r.pinned_at !== null,
+        hit: inTitle ? ('title' as const) : ('content' as const),
+        ...(snippet ? { snippet } : {}),
+      };
+    });
+  }
+
   /** 重命名。空标题不改 —— 避免误操作把名字清成空白 */
   renameSession(sessionId: string, title: string): void {
     const trimmed = title.trim();

@@ -385,6 +385,9 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.listSessions, async () => runtime!.listSessions());
+  ipcMain.handle(IPC.searchSessions, async (_e, query: unknown) =>
+    runtime!.searchSessions(typeof query === 'string' ? query : ''),
+  );
 
   /* ---- ORCA ---- */
   ipcMain.handle(IPC.listWorkers, async (_e, leadSessionId: string) =>
@@ -602,7 +605,7 @@ app.whenReady().then(async () => {
   //   APP_AUTOTEST=settings   → 验配置持久化（需不带 APP_PI_API_KEY 启动）
   const mode = process.env.APP_AUTOTEST;
   if (mode && mode !== '0' && win) {
-    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest, runOrcaToolsTest, runToolProbe, runCodeBlockTest, runMarkdownTest, runErrorDiagnosisTest, runOrcaDemoTest, runStatusLeakTest, runDraftTest, runShortcutTest } =
+    const { runAutotest, runResumeTest, runPermissionTest, runQueueTest, runCompactTest, runSteerTest, runDiffTest, runModeTest, runModelTest, runExportTest, runTaskTest, runExtraDirsTest, runTreeTest, runImageTest, runRewindTest, runStatusTest, runSettingsTest, runRestartTest, runErrorBoundaryTest, runWatchdogTest, runWindowStateTest, runSessionOrgTest, runParallelTest, runNotifyTest, runEventRoutingTest, runLiveViewTest, runOrcaDataTest, runOrcaIsolationTest, runOrcaUiTest, runOrcaToolsTest, runToolProbe, runCodeBlockTest, runMarkdownTest, runErrorDiagnosisTest, runOrcaDemoTest, runStatusLeakTest, runDraftTest, runShortcutTest, runSearchTest } =
       await import('./autotest.js');
     void (
       mode === 'resume'
@@ -679,6 +682,8 @@ app.whenReady().then(async () => {
                                         ? runDraftTest(win, runtime)
                                       : mode === 'shortcut'
                                         ? runShortcutTest(win, runtime)
+                                      : mode === 'search'
+                                        ? runSearchTest(win, runtime)
                                       : runAutotest(win, runtime)
     );
   }

@@ -98,6 +98,7 @@ export interface SidebarProps {
   onDelete: (id: string) => void;
   onOpenArchived: () => void;
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
   onToggleTheme: () => void;
   onToggleOrca: () => void;
   orcaOpen: boolean;
@@ -128,6 +129,7 @@ export function Sidebar(props: SidebarProps) {
     onDelete,
     onOpenArchived,
     onOpenSettings,
+    onOpenSearch,
     onToggleTheme,
     onToggleOrca,
     orcaOpen,
@@ -254,7 +256,7 @@ export function Sidebar(props: SidebarProps) {
             workerCount > 0 && <span className="nav-count">{workerCount}</span>
           )}
         </button>
-        <button type="button" className="nav-row" data-testid="nav-search">
+        <button type="button" className="nav-row" data-testid="nav-search" onClick={onOpenSearch}>
           <span className="nav-ico">{SEARCH_ICON}</span>
           搜索
         </button>
