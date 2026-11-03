@@ -63,6 +63,39 @@ export function SessionItem({
     return () => document.removeEventListener('mousedown', onDown);
   }, [menuOpen]);
 
+  /*
+   * 悬停自动开菜单，参数对齐 Cindy：开 90ms、关 160ms。
+   *
+   * 两个延迟都是有理由的：
+   *   开的延迟 90ms 防「鼠标扫过就弹一堆」；
+   *   关的延迟 160ms 给「从按钮移到菜单里」留出路 —— 鼠标穿过缝隙时
+   *   瞬间关掉的话，手速稍慢就点不到菜单项。
+   *
+   * 点击仍然是「钉住」：hover 开的菜单不抢焦点，点一下固定住，
+   * 否则用户想操作菜单时手一抖就没了。
+   */
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearHoverTimer = () => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+
+  const onMenuHoverStart = () => {
+    clearHoverTimer();
+    hoverTimer.current = setTimeout(() => setMenuOpen(true), 90);
+  };
+
+  const onMenuHoverEnd = () => {
+    clearHoverTimer();
+    // 删除确认中不自动关 —— 那会让人以为操作被取消了
+    if (confirmDelete) return;
+    hoverTimer.current = setTimeout(() => setMenuOpen(false), 160);
+  };
+
+  useEffect(() => () => clearHoverTimer(), []);
+
   // 外部改了标题（比如自动生成）要与本地同步
   useEffect(() => {
     if (!editing) setDraft(session.title);
@@ -176,6 +209,8 @@ ${session.preview}` : session.title}
           <div className="relative shrink-0" ref={menuRef}>
             <button
               data-testid="session-menu-btn"
+              onMouseEnter={onMenuHoverStart}
+              onMouseLeave={onMenuHoverEnd}
               className={`mr-1 rounded px-1.5 py-0.5 text-13 leading-none text-text-tertiary hover:bg-surface-hover hover:text-text-primary ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
               title="更多操作"
               onClick={(e) => {
@@ -189,6 +224,8 @@ ${session.preview}` : session.title}
             {menuOpen && (
               <div
                 data-testid="session-menu"
+                onMouseEnter={clearHoverTimer}
+                onMouseLeave={onMenuHoverEnd}
                 className="absolute right-0 top-full z-40 mt-1 w-36 rounded-md border border-[var(--border-strong)] bg-surface-elevated p-1 shadow-lg"
               >
                 {confirmDelete ? (

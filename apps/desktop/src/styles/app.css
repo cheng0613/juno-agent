@@ -438,11 +438,62 @@
   white-space: nowrap;
 }
 
+.chat-scroll-wrap {
+  /*
+   * 药丸的定位基准。
+   * 用 padding 上下各占一层，而不是给 scroller 加 position:
+   * 后者会让 scroller 自己成为定位上下文，药丸跟着内容一起滚。
+   */
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .scroller {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  scroll-behavior: smooth;
+  /*
+   * **不要 smooth**。
+   * 流式输出时每来一个字就设一次 scrollTop，平滑动画会不断被打断重启，
+   * 结果既卡又像被吸住。Cindy 也是瞬时跳。
+   */
+}
+
+/* 「↓ N 条新消息」药丸 —— 尺寸/圆角/过渡对齐 Cindy 规格 */
+.new-msg-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-size: var(--text-12);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.08);
+  transition:
+    opacity var(--motion-fast, 150ms) var(--motion-ease-out),
+    background-color var(--motion-fast, 150ms) var(--motion-ease-out);
+}
+
+.new-msg-pill:hover {
+  background: var(--surface-chip);
+}
+
+.new-msg-arrow {
+  font-size: 13px;
+  line-height: 1;
 }
 
 .chat {
@@ -478,15 +529,19 @@
 .row-user { display: flex; justify-content: flex-end; }
 
 .bubble-user {
-  /* Cindy 的用户气泡是**浅白底**，不是深色气泡。
-     很多人直觉会做成深色，但那样在一片浅色里会特别抢眼，
-     反而把注意力从内容移到了「我说了话」这件事上。 */
-  max-width: min(488px, 82%);
-  background: var(--msg-user-bg);
+  /*
+   * 精确对齐 Cindy：
+   *   上游 max-w-[min(720px,calc(100%-96px))] rounded-xl px-3.5 py-2.5
+   *
+   * 之前我写的 min(488px, 82%) / px-4 / py-3 —— 气泡明显偏窄、内距偏大，
+   * 整屏看下来比 Cindy「胖」。96px 是两侧至少留给内容的边距。
+   */
+  max-width: min(720px, calc(100% - 96px));
+  background: var(--surface-elevated);
   color: var(--text-primary);
   border: 1px solid var(--border-default);
-  padding: var(--space-3) var(--space-4);
-  border-radius: 12px;
+  padding: 10px 14px;
+  border-radius: 12px; /* rounded-xl */
   font-size: var(--text-15);
   line-height: var(--leading-relaxed);
   white-space: pre-wrap;
@@ -2345,7 +2400,7 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   opacity: 0.85;
 }
 .mode-btn-caret {
-  font-size: 9px;
+  font-size: var(--text-10, 10px);
   opacity: 0.55;
 }
 
@@ -2560,7 +2615,7 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   border-radius: 4px;
   background: var(--surface-chip);
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size: var(--text-10, 10px);
   line-height: 15px;
   text-align: center;
   font-weight: var(--font-semibold);
@@ -2828,4 +2883,67 @@ details[data-testid="task-item"] > summary::-webkit-details-marker { display: no
   border-top: 1px solid var(--border, #ececec);
   font-size: 11px;
   color: var(--text-tertiary, #999);
+}
+
+/* ---------------- 消息悬停操作条 ---------------- */
+/*
+ * 对齐 Cindy 规格：
+ *   按钮 24×24，图标 14px，间距 2px
+ *   默认 opacity 0 + 不可点，父行悬停时淡入 150ms
+ *   用户消息右对齐（时间在左），模型消息左对齐
+ */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  margin-top: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast, 150ms) var(--motion-ease-out);
+}
+
+.msg-actions-right {
+  justify-content: flex-end;
+}
+
+.msg-actions-left {
+  justify-content: flex-start;
+}
+
+/* 悬停这一条消息时操作条才出现 */
+.row-user:hover .msg-actions,
+.bubble-ai:hover .msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-act-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast, 150ms) var(--motion-ease-out),
+    background-color var(--motion-fast, 150ms) var(--motion-ease-out);
+}
+
+.msg-act-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.msg-time {
+  font-size: var(--text-12);
+  color: var(--text-tertiary);
+  padding: 0 4px;
+  white-space: nowrap;
 }

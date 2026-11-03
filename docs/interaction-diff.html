@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>交互差异对比：Juno vs Cindy</title>
+<style>
+  :root {
+    --bg: #f6f6f1; --card: #fff; --line: #e4e4dd; --text: #1c1c1a;
+    --dim: #6e6e68; --accent: #1c1c1a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 64px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 24px; }
+  .counts { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 28px; }
+  .chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--line);
+  }
+  .chip b { font-weight: 600; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px 20px 20px; margin: 0 0 14px;
+  }
+  .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .num {
+    font-size: 11px; font-weight: 600; color: #fff; background: var(--accent);
+    width: 20px; height: 20px; border-radius: 6px; display: grid;
+    place-items: center; flex-shrink: 0;
+  }
+  .name { font-size: 15px; font-weight: 600; }
+  .sev {
+    font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid currentColor; margin-left: auto;
+  }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+  .col {
+    border-radius: 8px; padding: 12px 14px; font-size: 13px;
+  }
+  .col.c { background: #f3f6f2; border: 1px solid #dfe7da; }
+  .col.m { background: #fdf5f4; border: 1px solid #f0dcd9; }
+  .tag {
+    display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; margin-bottom: 6px; opacity: .55;
+  }
+  .col b { font-weight: 600; }
+  .col .bad { color: #b3352a; font-weight: 500; }
+  .fix {
+    margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line);
+    font-size: 12.5px; color: #3b3b36;
+  }
+  .fix b { font-weight: 600; }
+  .note {
+    margin-top: 28px; padding: 16px 18px; border-radius: 10px;
+    background: #fffbe9; border: 1px solid #efe4bd; font-size: 13px;
+  }
+  .note b { font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>交互差异：Juno vs Cindy</h1>
+  <p class="sub">按「影响大 → 小」排序。每条都标了 Cindy 的做法、我现在的做法、以及打算怎么改。</p>
+
+  <div class="counts">
+    <span class="chip">共 <b>9</b> 项</span>
+    <span class="chip" style="color:#c8372d">影响大 <b>4</b></span>
+    <span class="chip" style="color:#b8730f">中等 <b>3</b></span>
+    <span class="chip" style="color:#6b6b6b">小 <b>2</b></span>
+  </div>
+
+  
+  <div class="card">
+    <div class="head">
+      <span class="num">1</span>
+      <span class="name">发送键</span>
+      <span class="sev" style="color:#c8372d">影响大</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>Enter 发送。<b>Ctrl/Cmd+Enter = 跑着时「插话」，没跑时「排队」</b>。Shift/Alt+Enter 换行。可在设置里改成「Ctrl+Enter 发送」。</div>
+      <div class="col m"><span class="tag">Juno 现在</span><span class="bad">跑着时按 Enter 直接变成「插话」</span> —— 同一个键做两件完全不同的事，没有 Ctrl+Enter 这条独立通道。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>改成 Cindy 语义：Enter 恒为发送/排队，Ctrl+Enter 才是插话。设置里加发送键选项。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">2</span>
+      <span class="name">输入中按 Enter</span>
+      <span class="sev" style="color:#6b6b6b">小</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>输入法组字中（isComposing）不拦截；按住不放（repeat）忽略；列表里 Enter 是「换行不新增项」。</div>
+      <div class="col m"><span class="tag">Juno 现在</span>组字和 repeat 都处理了。列表内 Enter 行为没有 —— 因为我没有列表节点。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>组字已对齐。列表行为随富文本编辑器一起做（暂缓）。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">3</span>
+      <span class="name">消息操作</span>
+      <span class="sev" style="color:#c8372d">影响大</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>每条消息悬停出操作条：复制/分支/编辑/更多 + 时间。24×24 按钮、14×14 图标，200ms 防抖 + 150ms 淡出。用户消息操作条右对齐。</div>
+      <div class="col m"><span class="tag">Juno 现在</span><span class="bad">完全没有悬停操作条</span>。复制只能手动选文字。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>加悬停操作条：复制 + 时间（先做这两个，分支/编辑涉及引擎能力，后续）。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">4</span>
+      <span class="name">新消息提示</span>
+      <span class="sev" style="color:#c8372d">影响大</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>不在底部且来了新消息时，底部浮一枚「↓ N 条新消息」药丸，32px 高、圆角胶囊、150ms 过渡。</div>
+      <div class="col m"><span class="tag">Juno 现在</span><span class="bad">没有</span>。往上翻历史时新内容来了完全无感。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>加这枚药丸 —— 是「看着它干活」这套体验里很关键的一环。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">5</span>
+      <span class="name">侧栏菜单</span>
+      <span class="sev" style="color:#b8730f">中等</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>悬停按钮 90ms 后打开，移开 160ms 后关闭（给「按钮→菜单」的移动留时间）。hover 展开不夺焦。</div>
+      <div class="col m"><span class="tag">Juno 现在</span>会话菜单要<b>点</b>才出，且移开瞬间消失。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>改成 hover 开 + 可点击固定，用同样的 90/160ms 参数。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">6</span>
+      <span class="name">滚动</span>
+      <span class="sev" style="color:#c8372d">影响大</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>独立的视口层管理滚动位置，行挂载不会触发整条消息流重排。往上翻时不被强制拉回底部。</div>
+      <div class="col m"><span class="tag">Juno 现在</span>scrollTick + scrollIntoView 简单实现。<span class="bad">流式输出时如果往上翻会被拽回来</span>。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>加滚动锚定：用户主动上翻后暂停自动跟随，回到底部再恢复。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">7</span>
+      <span class="name">消息时间</span>
+      <span class="sev" style="color:#b8730f">中等</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>每条消息带时间，悬停时显示。</div>
+      <div class="col m"><span class="tag">Juno 现在</span><span class="bad">没有时间戳</span>。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>随悬停操作条一起加。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">8</span>
+      <span class="name">面板层级</span>
+      <span class="sev" style="color:#6b6b6b">小</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>统一 interaction-portal 管理层级与焦点陷阱；Esc 逐层关闭。</div>
+      <div class="col m"><span class="tag">Juno 现在</span>各面板自己管 Esc，已做逐层关闭（上一轮加的），但没有焦点陷阱。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>Esc 已对齐。焦点陷阱（Tab 不跑出弹窗）可补。</div>
+  </div>
+  <div class="card">
+    <div class="head">
+      <span class="num">9</span>
+      <span class="name">长内容折叠</span>
+      <span class="sev" style="color:#b8730f">中等</span>
+    </div>
+    <div class="cols">
+      <div class="col c"><span class="tag">Cindy</span>工具调用长输出可折叠展开，代码块有复制按钮和语言标签。</div>
+      <div class="col m"><span class="tag">Juno 现在</span>代码块有复制和语言标签。<span class="bad">工具长输出没有折叠</span>。</div>
+    </div>
+    <div class="fix"><b>打算这么改：</b>工具输出超过 N 行折叠。</div>
+  </div>
+
+  <div class="note">
+    <b>最关键的一条是第 1 项。</b>我把「跑着时按 Enter」设计成了插话，
+    等于同一个键在不同时刻做两件完全不同的事 —— 这大概就是你觉得「交互很奇怪」的根源。
+    Cindy 的做法是：Enter 永远只是发送/排队，插话单独用 Ctrl+Enter。
+  </div>
+</div>
+</body>
+</html>

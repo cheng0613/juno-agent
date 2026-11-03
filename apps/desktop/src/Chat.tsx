@@ -1,4 +1,5 @@
 import type { UiMessage } from './shared/ipc';
+import { MessageActions } from './MessageActions';
 
 /** 工具卡片：默认折叠，成功的只显示一行，失败的直接展开 */
 function ToolCard({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
@@ -411,6 +412,10 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
               等于替他改了内容。 */}
           {msg.text ? <span className="user-raw">{msg.text}</span> : null}
         </div>
+        {/* 用户消息的操作条在气泡下方、右对齐（对齐 Cindy） */}
+        {msg.text ? (
+          <MessageActions text={msg.text} {...(msg.at ? { at: msg.at } : {})} align="right" />
+        ) : null}
       </div>
     );
   }
@@ -448,6 +453,10 @@ export function MessageRow({ msg, ok }: { msg: UiMessage; ok?: boolean }) {
   return (
     <div className={`bubble-ai${msg.streaming ? ' streaming' : ''}`}>
       <RichText text={msg.text ?? ''} />
+      {/* 跑着的时候不摆操作条 —— 内容还在变，复制出来是半截 */}
+      {!msg.streaming && msg.text ? (
+        <MessageActions text={msg.text} {...(msg.at ? { at: msg.at } : {})} align="left" />
+      ) : null}
     </div>
   );
 }

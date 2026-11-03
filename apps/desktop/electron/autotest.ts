@@ -516,6 +516,22 @@ export async function runQueueTest(win: BrowserWindow, runtime: HostRuntime): Pr
       return 'ok';
     })()`;
 
+  /*
+   * 插话专用：Ctrl+Enter。
+   * 对齐 Cindy 后的语义是「Enter 恒为发送/排队，Ctrl+Enter 才是插话」——
+   * 之前这里用裸 Enter，语义改了之后按下去变成排队，界面自然没有插话标记。
+   */
+  const typeAndSteer = (text: string) => `
+    (() => {
+      const ta = document.querySelector('textarea');
+      if (!ta) return 'no-textarea';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, ${JSON.stringify(text)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+      return 'ok';
+    })()`;
+
   const waitFor = async (pred: () => boolean, timeoutMs: number, label: string) => {
     const startedAt = Date.now();
     while (!pred()) {
@@ -538,7 +554,8 @@ export async function runQueueTest(win: BrowserWindow, runtime: HostRuntime): Pr
     note(`第一轮已卡在审批上: ${heldApprovalId}`);
 
     // 正在跑的时候把两句话排到队尾。
-    // 注意：跑着时按 Enter 是「插话」，排队得用底部的排队按钮。
+    // 语义已对齐 Cindy：跑着时按 Enter 就是「排队」，不是插话。
+    // 这里仍然走底部按钮，是为了顺带验按钮那条路也是通的。
     // 句子必须无歧义，否则模型会去追问「你说的第一条是什么」，
     // 转成 ask_user_question 交互，把流程弄乱。
     const queueByButton = (text: string) => `
@@ -858,6 +875,23 @@ export async function runSteerTest(win: BrowserWindow, runtime: HostRuntime): Pr
       return 'ok';
     })()`;
 
+  /**
+   * 插话专用：Ctrl+Enter。
+   *
+   * 对齐 Cindy 后的语义是「Enter 恒为发送/排队，Ctrl+Enter 才是插话」。
+   * 这里必须用 Ctrl+Enter，否则按下去变成排队，界面上不会有插话标记。
+   */
+  const typeAndSteer = (text: string) => `
+    (() => {
+      const ta = document.querySelector('textarea');
+      if (!ta) return 'no-textarea';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, ${JSON.stringify(text)});
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+      return 'ok';
+    })()`;
+
   try {
     await delay(2200);
     await win.webContents.executeJavaScript('window.host.createSession()');
@@ -888,7 +922,7 @@ export async function runSteerTest(win: BrowserWindow, runtime: HostRuntime): Pr
     note(`已开始流式输出: ${sawStreaming}`);
 
     const steered = await win.webContents.executeJavaScript(
-      typeAndEnter('马上停，只数到 5 就结束'),
+      typeAndSteer('马上停，只数到 5 就结束'),
     );
     note(`插话: ${steered}`);
     await delay(600);

@@ -195,6 +195,8 @@ export interface UiMessage {
   isError?: boolean;
   /** 仍在流式生成中 */
   streaming?: boolean;
+  /** 消息时间（毫秒）。悬停操作条上显示；引擎重放的历史没有这个值 */
+  at?: number;
   /** compact_boundary 专用：谁触发的、压缩前后的 token 估算 */
   compact?: { trigger: 'auto' | 'manual'; preTokens: number | null; postTokens: number | null };
   /** 用户消息带的图（data URI，主进程已读好） */

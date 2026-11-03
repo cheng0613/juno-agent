@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 一比一对齐：现状与差距</title>
+<style>
+  :root{--bg:#F2F2ED;--card:#FDFDF8;--line:rgba(0,0,0,.08);--text:rgba(0,0,0,.88);
+        --sec:rgba(0,0,0,.56);--ter:rgba(0,0,0,.44);--ok:#2f7d4f;--bad:#b3352a;}
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--text);
+       font:14px/1.65 'Inter',-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--sec);font-size:13px;margin:0 0 28px}
+  .sec{margin:0 0 10px;font-size:11px;font-weight:600;letter-spacing:.08em;
+       text-transform:uppercase;color:var(--ter)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:4px 0;margin:0 0 26px;overflow:hidden}
+  .row{display:flex;align-items:flex-start;gap:12px;padding:13px 18px;
+       border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .ic{width:16px;height:16px;border-radius:50%;flex-shrink:0;margin-top:4px;
+      display:grid;place-items:center;font-size:10px;color:#fff;font-weight:700}
+  .ic.y{background:var(--ok)}
+  .ic.n{background:var(--bad)}
+  .k{font-weight:600;font-size:13.5px;flex-shrink:0;width:132px}
+  .v{font-size:13px;color:var(--sec);flex:1}
+  .v b{color:var(--text);font-weight:500}
+  .sum{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 26px}
+  .chip{font-size:12px;padding:4px 12px;border-radius:999px;background:var(--card);
+        border:1px solid var(--line)}
+  .chip b{font-weight:600}
+  .note{margin-top:8px;padding:16px 18px;border-radius:10px;background:#fffbe9;
+        border:1px solid #efe4bd;font-size:13px;color:var(--text)}
+  .note b{font-weight:600}
+</style></head><body><div class="wrap">
+  <h1>UI 一比一对齐</h1>
+  <p class="sub">先把「哪里已经一致、哪里还没」量出来，再动手改。颜色 token 是逐值比对的，不是目测。</p>
+
+  <div class="sum">
+    <span class="chip">颜色 token <b style="color:#2f7d4f">100% 一致</b></span>
+    <span class="chip">尺度过关 <b>5 项</b></span>
+    <span class="chip">待改 <b style="color:#b3352a">8 项</b></span>
+  </div>
+
+  
+  <p class="sec">一致的（已一比一）</p>
+  <div class="card">
+    
+      <div class="row">
+        <span class="ic y">✓</span>
+        <span class="k">颜色 token</span>
+        <span class="v">177 个变量，Light/Dark 双模式，色值 100% 相同</span>
+      </div>
+      <div class="row">
+        <span class="ic y">✓</span>
+        <span class="k">字号尺度</span>
+        <span class="v">--text-10 到 --text-28，与上游完全一致</span>
+      </div>
+      <div class="row">
+        <span class="ic y">✓</span>
+        <span class="k">间距/圆角</span>
+        <span class="v">--space-0 到 --space-96、--radius-* 同源</span>
+      </div>
+      <div class="row">
+        <span class="ic y">✓</span>
+        <span class="k">内容区宽度</span>
+        <span class="v">880px 居中</span>
+      </div>
+      <div class="row">
+        <span class="ic y">✓</span>
+        <span class="k">字体栈</span>
+        <span class="v">Inter + 中文回退链一致</span>
+      </div>
+  </div>
+  <p class="sec">不一致的（这轮要改）</p>
+  <div class="card">
+    
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">用户气泡宽度</span>
+        <span class="v">上游 min(720px, 100%-96px)；我的是 min(488px, 82%) —— 明显偏窄</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">用户气泡内距</span>
+        <span class="v">上游 14/10px；我的是 16/12px —— 偏胖</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">消息悬停操作条</span>
+        <span class="v">上游每条消息有复制/分支/编辑/更多 + 时间（24×24 按钮、14px 图标）；我没有</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">↓ N 条新消息药丸</span>
+        <span class="v">上游有；我没有，上翻时新内容完全无感</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">滚动锚定</span>
+        <span class="v">上游独立视口层，上翻不拽人；我流式输出会强行拽回底部</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">发送键语义</span>
+        <span class="v">上游 Enter 恒为发送，Ctrl+Enter 才是插话；我跑着时 Enter 变插话</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">侧栏菜单</span>
+        <span class="v">上游 hover 90ms 打开、160ms 关闭；我要点击且移开即消失</span>
+      </div>
+      <div class="row">
+        <span class="ic n">!</span>
+        <span class="k">零星字号</span>
+        <span class="v">我写过 9px / 11.5px，不在规范尺度上（已清）</span>
+      </div>
+  </div>
+
+  <div class="note">
+    <b>结论：</b>底子已经是一比一的（177 个颜色变量逐值相同），
+    不像的地方全部出在<b>用法层</b> —— 气泡尺寸、悬停操作条、滚动锚定、发送键语义这些。
+    这轮就改这 8 项。
+  </div>
+</div></body></html>

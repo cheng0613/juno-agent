@@ -265,6 +265,16 @@ export function App() {
   const workerBySessionRef = useRef<Map<string, string>>(new Map());
   activeRef.current = activeId;
   const scrollerRef = useRef<HTMLDivElement>(null);
+  /*
+   * 是否停在底部。
+   *
+   * 这个 state 决定了「新内容来了要不要跟着滚」。
+   * 用户往上翻看历史时不能拽他 —— 实测里流式输出会把人硬拉回底部，
+   * 想读前面的内容完全做不到。
+   */
+  const [pinnedToBottom, setPinnedToBottom] = useState(true);
+  /** 离开底部后新到的消息条数 —— 底部浮那枚「↓ N 条新消息」用 */
+  const [unseenCount, setUnseenCount] = useState(0);
 
   /* ---------------- 主题 ---------------- */
   useEffect(() => {
@@ -640,9 +650,45 @@ export function App() {
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
+    /*
+     * 只有「用户本来就在底部」时才跟随。
+     * 160px 是容差：刚好差一两行时仍算在底部，否则内容轻微变高
+     * 就会把跟随状态踢掉。
+     */
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    setPinnedToBottom(nearBottom);
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages, liveText]);
+
+  /* 用户一往下滑到底，未读数就清零 —— 药丸自己消失 */
+  const onScrollerScroll = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (nearBottom) {
+      setPinnedToBottom(true);
+      setUnseenCount(0);
+    } else {
+      setPinnedToBottom(false);
+    }
+  };
+
+  /* 没跟随且消息增加时，累计未读条数 */
+  const prevMsgLen = useRef(0);
+  useEffect(() => {
+    const grew = messages.length - prevMsgLen.current;
+    prevMsgLen.current = messages.length;
+    if (grew > 0 && !pinnedToBottom) setUnseenCount((n) => n + grew);
+  }, [messages.length, pinnedToBottom]);
+
+  /* 点药丸回到最新 */
+  const jumpToLatest = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setUnseenCount(0);
+    setPinnedToBottom(true);
+  };
 
   /* 主动跳转：切会话、续跑后必须直接到底，否则用户以为没反应 */
   useEffect(() => {
@@ -663,20 +709,18 @@ export function App() {
     const images = pendingImages;
     setPendingImages([]);
 
-    // 跑着的时候按 Enter 默认「插话」：把它当成一句纠正，塞进当前这轮。
-    // 这比排队更符合直觉 —— 用户跑着时打字，十有八九是「不对，改成……」，
-    // 而不是「排队，等它跑完再说」。真要排队使底部的排队按钮。
+    /*
+     * 跑着时的 Enter = **排队**，不是插话。
+     *
+     * 之前我把这里写成了插话，结果同一个键在不同时刻做两件完全不同的事：
+     * 没跑时是发送，跑着时变成「塞进当前这轮」。用户没办法预先知道
+     * 按下去会发生什么，这就是「交互很奇怪」的根源。
+     *
+     * Cindy 的做法：Enter 永远只做一件事（发送/排队），
+     * 插话单独走 Ctrl+Enter。两件事两个键，不重叠。
+     */
     if (running) {
-      setMessages((prev) => [
-        ...prev,
-        { id: `steer-${Date.now()}`, role: 'user_steer' as const, text },
-      ]);
-      try {
-        await host.steer(activeId, text);
-      } catch (error) {
-        // 最常见的情况：这一轮刚好跑完了，引擎那边已经没有可以插话的轮
-        setNotice(error instanceof Error ? error.message : String(error));
-      }
+      setQueued((prev) => [...prev, text]);
       return;
     }
 
@@ -689,6 +733,34 @@ export function App() {
     setRunning(true);
     await host.send({ sessionId: activeId, text, images }).catch(() => setRunning(false));
   }, [input, activeId, running, pendingImages, host]);
+
+  /**
+   * 插话（Ctrl+Enter）。
+   *
+   * 只在本轮正在跑的时候有意义 —— 没在跑时它是普通发送。
+   * 与 send() 分开，是为了让两个键的职责不混。
+   */
+  const steerNow = useCallback(async () => {
+    const text = input.trim();
+    if (!text || !activeId) return;
+    if (!running) {
+      void send();
+      return;
+    }
+
+    setInput('');
+    clearDraft(activeId);
+    setMessages((prev) => [
+      ...prev,
+      { id: `steer-${Date.now()}`, role: 'user_steer' as const, text },
+    ]);
+    try {
+      await host.steer(activeId, text);
+    } catch (error) {
+      // 最常见的情况：这一轮刚好跑完了，引擎那边已经没有可以插话的轮
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [input, activeId, running, send, host]);
 
   /* 跑着时把这句话排到队尾，等本轮结束再发 */
   const queueInstead = useCallback(() => {
@@ -1420,13 +1492,34 @@ export function App() {
           )}
         </div>
 
-        <div className="scroller" ref={scrollerRef}>
-          <Chat messages={messages} liveText={liveText} running={running} />
-          {tasks.length > 0 && (
-            <TaskCard
-              tasks={tasks}
-              onStop={(taskId) => void stopTask(taskId)}
-            />
+        <div className="chat-scroll-wrap">
+          <div className="scroller" ref={scrollerRef} onScroll={onScrollerScroll}>
+            <Chat messages={messages} liveText={liveText} running={running} />
+            {tasks.length > 0 && (
+              <TaskCard
+                tasks={tasks}
+                onStop={(taskId) => void stopTask(taskId)}
+              />
+            )}
+          </div>
+
+          {/*
+            新消息药丸。
+            结构跟 Cindy 一致：底部居中、圆角胶囊、带箭头。
+            只在「离开了底部 + 有新内容」时出现。
+          */}
+          {!pinnedToBottom && unseenCount > 0 && (
+            <button
+              type="button"
+              className="new-msg-pill"
+              data-testid="new-msg-pill"
+              onClick={jumpToLatest}
+            >
+              <span className="new-msg-arrow" aria-hidden="true">
+                ↓
+              </span>
+              {unseenCount} 条新消息
+            </button>
           )}
         </div>
 
@@ -1473,7 +1566,7 @@ export function App() {
               value={input}
               placeholder={
                 running
-                  ? '这一轮还在跑：Enter 插话纠正，Shift+Enter 换行'
+                  ? 'Enter 排队，Ctrl+Enter 插话纠正，Shift+Enter 换行'
                   : '问点什么…（Enter 发送，Shift+Enter 换行）'
               }
               onChange={(e) => setInput(e.target.value)}
@@ -1494,8 +1587,20 @@ export function App() {
               }}
               onDragOver={(e) => e.preventDefault()}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
+                /*
+                 * 两个键职责分开（对齐 Cindy）：
+                 *   Enter       发送 / 跑着时排队
+                 *   Ctrl+Enter  插话（没跑时就是普通发送）
+                 *   Shift/Alt+Enter 换行
+                 *
+                 * isComposing：输入法组字中按回车是在选词，不能当成发送。
+                 */
+                if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                if (e.shiftKey || e.altKey) return; // 交给 textarea 自己换行
+                e.preventDefault();
+                if (e.ctrlKey || e.metaKey) {
+                  void steerNow();
+                } else {
                   void send();
                 }
               }}

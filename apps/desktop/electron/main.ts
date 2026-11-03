@@ -90,6 +90,8 @@ function rowToUiMessage(row: {
   role: string;
   content: unknown;
   toolUseId?: string | null;
+  /** 消息创建时间（库里的 created_at） */
+  createdAt?: number | null;
 }): import('../src/shared/ipc.js').UiMessage {
   let c: Record<string, unknown> = {};
   try {
@@ -107,7 +109,7 @@ function rowToUiMessage(row: {
     | 'tool_result'
     | 'error'
     | 'compact_boundary';
-  const base = { id: row.id, role };
+  const base = { id: row.id, role, ...(row.createdAt ? { at: row.createdAt } : {}) };
 
   switch (role) {
     case 'user':
